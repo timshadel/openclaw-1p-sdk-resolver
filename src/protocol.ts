@@ -19,6 +19,9 @@ export type ResponsePayload = {
 
 type FileConfig = {
   vault?: unknown;
+  defaultVault?: unknown;
+  vaultPolicy?: unknown;
+  vaultWhitelist?: unknown;
   allowedIdRegex?: unknown;
   maxIds?: unknown;
   maxStdinBytes?: unknown;
@@ -29,6 +32,8 @@ type FileConfig = {
 };
 
 const DEFAULTS = {
+  defaultVault: "default",
+  vaultPolicy: "default_vault",
   maxIds: 50,
   maxStdinBytes: 128 * 1024,
   timeoutMs: 25_000,
@@ -44,7 +49,9 @@ const CAPS = {
 } as const;
 
 export type RuntimeConfig = {
-  vault?: string;
+  defaultVault: string;
+  vaultPolicy: "default_vault" | "default_vault+whitelist" | "any";
+  vaultWhitelist: string[];
   allowedIdRegex?: RegExp;
   maxIds: number;
   maxStdinBytes: number;
@@ -132,11 +139,35 @@ export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     }
   }
 
-  return {
-    vault:
-      typeof fileConfig.vault === "string" && fileConfig.vault.trim().length > 0
+  const configDefaultVault =
+    typeof fileConfig.defaultVault === "string" && fileConfig.defaultVault.trim().length > 0
+      ? fileConfig.defaultVault.trim()
+      : typeof fileConfig.vault === "string" && fileConfig.vault.trim().length > 0
         ? fileConfig.vault.trim()
-        : undefined,
+        : DEFAULTS.defaultVault;
+
+  const vaultPolicy =
+    fileConfig.vaultPolicy === "default_vault" ||
+    fileConfig.vaultPolicy === "default_vault+whitelist" ||
+    fileConfig.vaultPolicy === "any"
+      ? fileConfig.vaultPolicy
+      : DEFAULTS.vaultPolicy;
+
+  const vaultWhitelist = Array.isArray(fileConfig.vaultWhitelist)
+    ? Array.from(
+        new Set(
+          fileConfig.vaultWhitelist
+            .filter((entry): entry is string => typeof entry === "string")
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0)
+        )
+      )
+    : [];
+
+  return {
+    defaultVault: configDefaultVault,
+    vaultPolicy,
+    vaultWhitelist,
     allowedIdRegex,
     maxIds,
     maxStdinBytes,

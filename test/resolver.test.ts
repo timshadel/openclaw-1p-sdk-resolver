@@ -52,7 +52,7 @@ describe("resolver", () => {
     await runResolver({
       stdin: stdinFrom(JSON.stringify({ protocolVersion: 3, ids: ["A/token"] })),
       stdout: out,
-      env: createConfigEnv({ vault: "MainVault" })
+      env: createConfigEnv({ defaultVault: "MainVault" })
     });
 
     expect(parseOutput(out.text)).toEqual({ protocolVersion: 3, values: {} });
@@ -73,7 +73,7 @@ describe("resolver", () => {
       stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids: ["ServiceA/token", "ServiceB/token"] })),
       stdout: out,
       env: {
-        ...createConfigEnv({ vault: "MainVault" }),
+        ...createConfigEnv({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
       },
       resolver
@@ -102,7 +102,7 @@ describe("resolver", () => {
       stdin: stdinFrom(JSON.stringify({ protocolVersion: 9, ids: ["allowed/token", "blocked token"] })),
       stdout: out,
       env: {
-        ...createConfigEnv({ vault: "MainVault", allowedIdRegex: "^[A-Za-z0-9_\\/-]+$" }),
+        ...createConfigEnv({ defaultVault: "MainVault", allowedIdRegex: "^[A-Za-z0-9_\\/-]+$" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
       },
       resolver
@@ -130,7 +130,7 @@ describe("resolver", () => {
       stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids: ["a"] })),
       stdout: out,
       env: {
-        ...createConfigEnv({ vault: "MainVault", timeoutMs: 1 }),
+        ...createConfigEnv({ defaultVault: "MainVault", timeoutMs: 1 }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
       },
       resolver
@@ -139,16 +139,105 @@ describe("resolver", () => {
     expect(parseOutput(out.text)).toEqual({ protocolVersion: 1, values: {} });
   });
 
-  it("returns empty values when vault is missing", async () => {
+  it("uses default vault when config omits it", async () => {
     const out = new CaptureWritable();
+
+    const resolver: SecretResolver = {
+      async resolveRefs(refs) {
+        const values = new Map<string, string>();
+        values.set(refs[0], "secret-a");
+        return values;
+      }
+    };
 
     await runResolver({
       stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids: ["MyAPI/token"] })),
       stdout: out,
-      env: { OP_SERVICE_ACCOUNT_TOKEN: "token" }
+      env: { OP_SERVICE_ACCOUNT_TOKEN: "token" },
+      resolver
     });
 
-    expect(parseOutput(out.text)).toEqual({ protocolVersion: 1, values: {} });
+    expect(parseOutput(out.text)).toEqual({
+      protocolVersion: 1,
+      values: { "MyAPI/token": "secret-a" }
+    });
+  });
+
+  it("blocks explicit refs outside default vault policy", async () => {
+    const out = new CaptureWritable();
+
+    const resolver: SecretResolver = {
+      async resolveRefs(refs) {
+        const values = new Map<string, string>();
+        for (const ref of refs) {
+          values.set(ref, "secret-a");
+        }
+        return values;
+      }
+    };
+
+    await runResolver({
+      stdin: stdinFrom(
+        JSON.stringify({
+          protocolVersion: 1,
+          ids: ["op://MainVault/MyAPI/token", "op://OtherVault/MyAPI/token"]
+        })
+      ),
+      stdout: out,
+      env: {
+        OP_SERVICE_ACCOUNT_TOKEN: "token",
+        ...createConfigEnv({ defaultVault: "MainVault", vaultPolicy: "default_vault" })
+      },
+      resolver
+    });
+
+    expect(parseOutput(out.text)).toEqual({
+      protocolVersion: 1,
+      values: {
+        "op://MainVault/MyAPI/token": "secret-a"
+      }
+    });
+  });
+
+  it("allows explicit refs in whitelist when policy permits", async () => {
+    const out = new CaptureWritable();
+
+    const resolver: SecretResolver = {
+      async resolveRefs(refs) {
+        const values = new Map<string, string>();
+        for (const ref of refs) {
+          values.set(ref, "secret-a");
+        }
+        return values;
+      }
+    };
+
+    await runResolver({
+      stdin: stdinFrom(
+        JSON.stringify({
+          protocolVersion: 1,
+          ids: ["op://MainVault/MyAPI/token", "op://SharedVault/MyAPI/token"]
+        })
+      ),
+      stdout: out,
+      env: {
+        OP_SERVICE_ACCOUNT_TOKEN: "token",
+        ...createConfigEnv({
+          defaultVault: "MainVault",
+          vaultPolicy: "default_vault+whitelist",
+          vaultWhitelist: ["SharedVault"]
+        })
+      },
+      resolver
+    });
+
+    expect(parseOutput(out.text)).toEqual({
+      protocolVersion: 1,
+      values: {
+        "op://MainVault/MyAPI/token": "secret-a",
+        "op://SharedVault/MyAPI/token": "secret-a"
+      }
+    });
   });
 
   it("enforces stdin max bytes", async () => {

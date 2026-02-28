@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { formatResponse, loadConfig, parseRequestBuffer, type ResponsePayload } from "./protocol.js";
 import { createOnePasswordResolver, type SecretResolver } from "./onepassword.js";
-import { mapIdToReference, sanitizeIds } from "./sanitize.js";
+import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 
 export type ResolverRuntime = {
   stdin?: NodeJS.ReadableStream;
@@ -103,7 +103,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
   }
 
   const protocolVersion = request.protocolVersion;
-  if (!token || !config.vault) {
+  if (!token) {
     await writeResponse(stdout, emptyResponse(protocolVersion));
     return;
   }
@@ -117,9 +117,28 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
   const refToId = new Map<string, string>();
   const refs: string[] = [];
   for (const id of ids) {
-    const ref = mapIdToReference(id, config.vault);
+    const ref = mapIdToReference(id, config.defaultVault);
+    const vault = extractVaultFromReference(ref);
+    if (!vault) {
+      continue;
+    }
+    if (
+      !isVaultAllowed({
+        vault,
+        defaultVault: config.defaultVault,
+        vaultPolicy: config.vaultPolicy,
+        vaultWhitelist: config.vaultWhitelist
+      })
+    ) {
+      continue;
+    }
     refToId.set(ref, id);
     refs.push(ref);
+  }
+
+  if (refs.length === 0) {
+    await writeResponse(stdout, emptyResponse(protocolVersion));
+    return;
   }
 
   try {

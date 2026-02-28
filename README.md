@@ -7,7 +7,7 @@ Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that reso
 - Reads request JSON from `stdin` and writes response JSON to `stdout`.
 - Uses service-account auth only via `OP_SERVICE_ACCOUNT_TOKEN`.
 - Fails closed: malformed input, missing token, timeout, or SDK failures return valid JSON with empty `values`.
-- Supports explicit `op://...` passthrough and `<item>/<field>` mapping via configured vault.
+- Supports explicit `op://...` passthrough and `<item>/<field>` mapping via config-driven default vault.
 - Strict caps for `stdin` size, id count, timeout, and concurrency.
 - No secret logging.
 
@@ -30,8 +30,8 @@ Unresolved IDs are omitted from `values`.
 ## ID Mapping
 
 - If id starts with `op://`, resolver uses it unchanged.
-- Otherwise resolver maps with vault:
-  - `MyAPI/token` + configured `vault: "MainVault"`
+- Otherwise resolver maps with default vault:
+  - `MyAPI/token` + `defaultVault: "MainVault"`
   - becomes `op://MainVault/MyAPI/token`
 
 ## Runtime Configuration
@@ -48,7 +48,9 @@ Example config JSON:
 
 ```json
 {
-  "vault": "MainVault",
+  "defaultVault": "MainVault",
+  "vaultPolicy": "default_vault+whitelist",
+  "vaultWhitelist": ["SharedVault"],
   "allowedIdRegex": "^[A-Za-z0-9_\\/-]+$",
   "maxIds": 50,
   "maxStdinBytes": 131072,
@@ -67,6 +69,18 @@ Defaults/caps:
 - `concurrency`: default `4`, hard cap `10`
 - `integrationName`: default `openclaw-1p-sdk-resolver`
 - `integrationVersion`: default `1.0.0`
+- `defaultVault`: default `"default"` (also supports legacy `vault` key)
+- `vaultPolicy`: default `"default_vault"`
+  - `"default_vault"`: only configured `defaultVault` allowed for explicit `op://...` refs
+  - `"default_vault+whitelist"`: `defaultVault` plus `vaultWhitelist`
+  - `"any"`: any explicit vault allowed
+- `vaultWhitelist`: default `[]`
+
+Vault source precedence:
+
+- `defaultVault` from config file
+- fallback to legacy `vault` config key
+- fallback to built-in default `"default"`
 
 ## Install
 
@@ -135,7 +149,7 @@ Example `openclaw.json` provider:
 echo '{"protocolVersion":1,"ids":["MyAPI/token"]}' | ./bin/openclaw-1p-sdk-resolver
 ```
 
-This only returns values when `OP_SERVICE_ACCOUNT_TOKEN` is set, config file exists with `vault`, and the target secret exists.
+This only returns values when `OP_SERVICE_ACCOUNT_TOKEN` is set and the target secret exists in an allowed vault.
 
 ## Security Notes
 
@@ -148,7 +162,7 @@ This only returns values when `OP_SERVICE_ACCOUNT_TOKEN` is set, config file exi
 ## Troubleshooting
 
 - Missing `OP_SERVICE_ACCOUNT_TOKEN`: resolver returns `{ "values": {} }`.
-- Missing config file or missing `vault` in config: resolver returns `{ "values": {} }`.
+- Explicit `op://...` ids outside vault policy are dropped before resolve.
 - Invalid JSON input: resolver returns empty values.
 - Invalid IDs (empty, newline/NUL, `..`, regex mismatch): dropped before resolve.
 - Vault permission issues / unknown ref: unresolved IDs are omitted.

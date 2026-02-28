@@ -33,11 +33,17 @@ This file is written for:
 - Output (stdout): JSON response with `protocolVersion` and `values`.
 
 ### ID mapping rule
-- Vault comes from `OP_VAULT`
+- Vault comes from config `defaultVault` (legacy `vault` key still supported)
 - For each requested `id`:
   - If it starts with `op://`, treat it as a full 1Password secret reference.
   - Otherwise interpret it as the path after `op://<vault>/`:
     - `MyAPI/token` → `op://<vault>/MyAPI/token`
+
+### Vault policy rule
+- `vaultPolicy` controls allowed explicit `op://...` vaults:
+  - `default_vault` (default): only `defaultVault`
+  - `default_vault+whitelist`: `defaultVault` plus `vaultWhitelist`
+  - `any`: allow any vault in explicit refs
 
 ---
 

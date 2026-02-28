@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapIdToReference, sanitizeId, sanitizeIds } from "../src/sanitize.js";
+import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeId, sanitizeIds } from "../src/sanitize.js";
 
 describe("sanitize", () => {
   it("accepts valid ids", () => {
@@ -32,5 +32,48 @@ describe("sanitize", () => {
     expect(mapIdToReference("op://Vault/item/field", "MainVault")).toBe(
       "op://Vault/item/field"
     );
+  });
+
+  it("extracts vault from full refs", () => {
+    expect(extractVaultFromReference("op://MainVault/MyAPI/token")).toBe("MainVault");
+    expect(extractVaultFromReference("not-a-ref")).toBeNull();
+  });
+
+  it("enforces vault policy", () => {
+    expect(
+      isVaultAllowed({
+        vault: "MainVault",
+        defaultVault: "MainVault",
+        vaultPolicy: "default_vault",
+        vaultWhitelist: []
+      })
+    ).toBe(true);
+
+    expect(
+      isVaultAllowed({
+        vault: "OtherVault",
+        defaultVault: "MainVault",
+        vaultPolicy: "default_vault",
+        vaultWhitelist: ["OtherVault"]
+      })
+    ).toBe(false);
+
+    expect(
+      isVaultAllowed({
+        vault: "OtherVault",
+        defaultVault: "MainVault",
+        vaultPolicy: "default_vault+whitelist",
+        vaultWhitelist: ["OtherVault"]
+      })
+    ).toBe(true);
+
+    expect(
+      isVaultAllowed({
+        vault: "AnotherVault",
+        defaultVault: "MainVault",
+        vaultPolicy: "any",
+        vaultWhitelist: []
+      })
+    ).toBe(true);
   });
 });

@@ -51,3 +51,32 @@ export function mapIdToReference(id: string, vault: string): string {
 
   return `op://${vault}/${id}`;
 }
+
+export function extractVaultFromReference(ref: string): string | null {
+  const match = /^op:\/\/([^/]+)\/.+/.exec(ref);
+  if (!match) {
+    return null;
+  }
+  return match[1];
+}
+
+export function isVaultAllowed(options: {
+  vault: string;
+  defaultVault: string;
+  vaultPolicy: "default_vault" | "default_vault+whitelist" | "any";
+  vaultWhitelist: string[];
+}): boolean {
+  if (options.vaultPolicy === "any") {
+    return true;
+  }
+
+  if (options.vault === options.defaultVault) {
+    return true;
+  }
+
+  if (options.vaultPolicy === "default_vault+whitelist") {
+    return options.vaultWhitelist.includes(options.vault);
+  }
+
+  return false;
+}

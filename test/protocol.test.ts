@@ -48,7 +48,9 @@ describe("protocol", () => {
     writeConfig(
       home,
       JSON.stringify({
-        vault: "MainVault",
+        defaultVault: "MainVault",
+        vaultPolicy: "default_vault+whitelist",
+        vaultWhitelist: ["SharedVault"],
         maxIds: 999,
         maxStdinBytes: 9999999,
         concurrency: 99,
@@ -63,16 +65,34 @@ describe("protocol", () => {
     expect(config.maxStdinBytes).toBe(1024 * 1024);
     expect(config.concurrency).toBe(10);
     expect(config.timeoutMs).toBe(1000);
-    expect(config.vault).toBe("MainVault");
+    expect(config.defaultVault).toBe("MainVault");
+    expect(config.vaultPolicy).toBe("default_vault+whitelist");
+    expect(config.vaultWhitelist).toEqual(["SharedVault"]);
     expect(config.allowedIdRegex?.test("MyAPI/token")).toBe(true);
   });
 
   it("supports explicit config path override", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
     const customConfigPath = path.join(dir, "custom.json");
-    writeFileSync(customConfigPath, JSON.stringify({ vault: "OverrideVault" }), "utf8");
+    writeFileSync(customConfigPath, JSON.stringify({ defaultVault: "OverrideVault" }), "utf8");
 
     const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
-    expect(config.vault).toBe("OverrideVault");
+    expect(config.defaultVault).toBe("OverrideVault");
+  });
+
+  it("falls back to legacy vault key", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, JSON.stringify({ vault: "LegacyVault" }), "utf8");
+
+    const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
+    expect(config.defaultVault).toBe("LegacyVault");
+  });
+
+  it("uses default vault policy and vault when omitted", () => {
+    const config = loadConfig({});
+    expect(config.defaultVault).toBe("default");
+    expect(config.vaultPolicy).toBe("default_vault");
+    expect(config.vaultWhitelist).toEqual([]);
   });
 });
