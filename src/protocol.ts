@@ -1,0 +1,191 @@
+import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+export type RawRequest = {
+  protocolVersion?: unknown;
+  ids?: unknown;
+};
+
+export type NormalizedRequest = {
+  protocolVersion: number;
+  ids: unknown[];
+};
+
+export type ResponsePayload = {
+  protocolVersion: number;
+  values: Record<string, string>;
+};
+
+type FileConfig = {
+  vault?: unknown;
+  allowedIdRegex?: unknown;
+  maxIds?: unknown;
+  maxStdinBytes?: unknown;
+  timeoutMs?: unknown;
+  concurrency?: unknown;
+  integrationName?: unknown;
+  integrationVersion?: unknown;
+};
+
+const DEFAULTS = {
+  maxIds: 50,
+  maxStdinBytes: 128 * 1024,
+  timeoutMs: 25_000,
+  concurrency: 4,
+  integrationName: "openclaw-1p-sdk-resolver",
+  integrationVersion: "1.0.0"
+} as const;
+
+const CAPS = {
+  maxIds: 200,
+  maxStdinBytes: 1024 * 1024,
+  concurrency: 10
+} as const;
+
+export type RuntimeConfig = {
+  vault?: string;
+  allowedIdRegex?: RegExp;
+  maxIds: number;
+  maxStdinBytes: number;
+  timeoutMs: number;
+  concurrency: number;
+  integrationName: string;
+  integrationVersion: string;
+};
+
+function parseIntLike(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveConfigPath(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.OP_RESOLVER_CONFIG?.trim()) {
+    return env.OP_RESOLVER_CONFIG.trim();
+  }
+
+  const baseDir = env.XDG_CONFIG_HOME?.trim()
+    ? env.XDG_CONFIG_HOME.trim()
+    : env.HOME?.trim()
+      ? path.join(env.HOME.trim(), ".config")
+      : undefined;
+
+  if (!baseDir) {
+    return undefined;
+  }
+
+  return path.join(baseDir, "openclaw-1p-sdk-resolver", "config.json");
+}
+
+function readConfigFile(env: NodeJS.ProcessEnv): FileConfig {
+  const configPath = resolveConfigPath(env);
+  if (!configPath) {
+    return {};
+  }
+
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    return parsed as FileConfig;
+  } catch {
+    return {};
+  }
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
+  const fileConfig = readConfigFile(env);
+
+  const maxIds = clamp(parseIntLike(fileConfig.maxIds, DEFAULTS.maxIds), 1, CAPS.maxIds);
+  const maxStdinBytes = clamp(
+    parseIntLike(fileConfig.maxStdinBytes, DEFAULTS.maxStdinBytes),
+    1,
+    CAPS.maxStdinBytes
+  );
+  const timeoutMs = clamp(parseIntLike(fileConfig.timeoutMs, DEFAULTS.timeoutMs), 1000, 120_000);
+  const concurrency = clamp(
+    parseIntLike(fileConfig.concurrency, DEFAULTS.concurrency),
+    1,
+    CAPS.concurrency
+  );
+
+  let allowedIdRegex: RegExp | undefined;
+  if (typeof fileConfig.allowedIdRegex === "string" && fileConfig.allowedIdRegex.length > 0) {
+    try {
+      allowedIdRegex = new RegExp(fileConfig.allowedIdRegex);
+    } catch {
+      allowedIdRegex = /$a/;
+    }
+  }
+
+  return {
+    vault:
+      typeof fileConfig.vault === "string" && fileConfig.vault.trim().length > 0
+        ? fileConfig.vault.trim()
+        : undefined,
+    allowedIdRegex,
+    maxIds,
+    maxStdinBytes,
+    timeoutMs,
+    concurrency,
+    integrationName:
+      typeof fileConfig.integrationName === "string" && fileConfig.integrationName.trim().length > 0
+        ? fileConfig.integrationName.trim()
+        : DEFAULTS.integrationName,
+    integrationVersion:
+      typeof fileConfig.integrationVersion === "string" && fileConfig.integrationVersion.trim().length > 0
+        ? fileConfig.integrationVersion.trim()
+        : DEFAULTS.integrationVersion
+  };
+}
+
+export function parseRequestBuffer(
+  buffer: Buffer,
+  maxStdinBytes: number
+): NormalizedRequest | null {
+  if (buffer.byteLength > maxStdinBytes) {
+    return null;
+  }
+
+  let parsed: RawRequest;
+  try {
+    parsed = JSON.parse(buffer.toString("utf8")) as RawRequest;
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  if (!Number.isInteger(parsed.protocolVersion)) {
+    return null;
+  }
+
+  if (!Array.isArray(parsed.ids)) {
+    return null;
+  }
+
+  return {
+    protocolVersion: parsed.protocolVersion as number,
+    ids: parsed.ids
+  };
+}
+
+export function formatResponse(payload: ResponsePayload): string {
+  return JSON.stringify(payload);
+}

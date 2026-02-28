@@ -1,0 +1,132 @@
+import { createClient } from "@1password/sdk";
+
+export type SecretResolver = {
+  resolveRefs(refs: string[], timeoutMs: number, concurrency: number): Promise<Map<string, string>>;
+};
+
+type MaybeSecretsApi = {
+  resolve?: (ref: string) => Promise<string>;
+  resolveAll?: (refs: string[]) => Promise<unknown>;
+};
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("timeout"));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+function toMapFromResolveAllResult(refs: string[], result: unknown): Map<string, string> {
+  const values = new Map<string, string>();
+
+  if (result instanceof Map) {
+    for (const [ref, value] of result.entries()) {
+      if (typeof ref === "string" && typeof value === "string") {
+        values.set(ref, value);
+      }
+    }
+    return values;
+  }
+
+  if (Array.isArray(result)) {
+    for (let i = 0; i < result.length && i < refs.length; i += 1) {
+      const value = result[i];
+      if (typeof value === "string") {
+        values.set(refs[i], value);
+      }
+    }
+    return values;
+  }
+
+  if (result && typeof result === "object") {
+    for (const ref of refs) {
+      const value = (result as Record<string, unknown>)[ref];
+      if (typeof value === "string") {
+        values.set(ref, value);
+      }
+    }
+  }
+
+  return values;
+}
+
+async function resolveWithConcurrency(
+  secrets: Required<Pick<MaybeSecretsApi, "resolve">>,
+  refs: string[],
+  timeoutMs: number,
+  concurrency: number
+): Promise<Map<string, string>> {
+  const values = new Map<string, string>();
+  const queue = [...refs];
+
+  const workers = Array.from({ length: Math.min(concurrency, refs.length) }, async () => {
+    while (queue.length > 0) {
+      const ref = queue.shift();
+      if (!ref) {
+        continue;
+      }
+      try {
+        const value = await withTimeout(secrets.resolve(ref), timeoutMs);
+        if (typeof value === "string") {
+          values.set(ref, value);
+        }
+      } catch {
+        // Individual failures are expected and omitted from output.
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  return values;
+}
+
+export async function createOnePasswordResolver(options: {
+  auth: string;
+  integrationName: string;
+  integrationVersion: string;
+}): Promise<SecretResolver> {
+  const client = await createClient({
+    auth: options.auth,
+    integrationName: options.integrationName,
+    integrationVersion: options.integrationVersion
+  });
+
+  const secrets = (client as { secrets?: MaybeSecretsApi }).secrets;
+  if (!secrets) {
+    throw new Error("1password-secrets-api-missing");
+  }
+
+  return {
+    async resolveRefs(refs: string[], timeoutMs: number, concurrency: number): Promise<Map<string, string>> {
+      if (refs.length === 0) {
+        return new Map<string, string>();
+      }
+
+      if (typeof secrets.resolveAll === "function") {
+        try {
+          const result = await withTimeout(secrets.resolveAll(refs), timeoutMs);
+          return toMapFromResolveAllResult(refs, result);
+        } catch {
+          // Fallback to per-ref resolving.
+        }
+      }
+
+      if (typeof secrets.resolve !== "function") {
+        return new Map<string, string>();
+      }
+
+      return resolveWithConcurrency({ resolve: secrets.resolve.bind(secrets) }, refs, timeoutMs, concurrency);
+    }
+  };
+}
