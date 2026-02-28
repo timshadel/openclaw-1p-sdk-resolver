@@ -246,6 +246,13 @@ describe("resolver", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("accepts stdin payload exactly at byte limit", async () => {
+    const stream = stdinFrom("123");
+    const result = await readStdinWithLimit(stream, 3, 1000);
+    expect(result.ok).toBe(true);
+    expect(result.buffer.toString("utf8")).toBe("123");
+  });
+
   it("times out stdin read when stream does not end", async () => {
     const stream = new PassThrough();
     const started = Date.now();
@@ -255,5 +262,37 @@ describe("resolver", () => {
     expect(result.ok).toBe(false);
     expect(elapsed).toBeGreaterThanOrEqual(15);
     expect(elapsed).toBeLessThan(1000);
+  });
+
+  it("caps processed ids at maxIds under large input", async () => {
+    const out = new CaptureWritable();
+    const ids = Array.from({ length: 300 }, (_, i) => `Service${i}/token`);
+
+    const resolver: SecretResolver = {
+      async resolveRefs(refs) {
+        expect(refs.length).toBe(200);
+        const values = new Map<string, string>();
+        for (const ref of refs) {
+          values.set(ref, "secret");
+        }
+        return values;
+      }
+    };
+
+    await runResolver({
+      stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids })),
+      stdout: out,
+      env: {
+        ...createConfigEnv({ defaultVault: "MainVault", maxIds: 999 }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      resolver
+    });
+
+    const parsed = parseOutput(out.text);
+    expect(Object.keys(parsed.values)).toHaveLength(200);
+    expect(parsed.values["Service0/token"]).toBe("secret");
+    expect(parsed.values["Service199/token"]).toBe("secret");
+    expect(parsed.values["Service250/token"]).toBeUndefined();
   });
 });

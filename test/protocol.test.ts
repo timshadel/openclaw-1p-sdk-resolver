@@ -33,6 +33,15 @@ describe("protocol", () => {
     expect(parsed).toBeNull();
   });
 
+  it("accepts payload exactly at max byte limit", () => {
+    const body = JSON.stringify({ protocolVersion: 1, ids: ["A/token"] });
+    const parsed = parseRequestBuffer(Buffer.from(body), Buffer.byteLength(body));
+    expect(parsed).toEqual({
+      protocolVersion: 1,
+      ids: ["A/token"]
+    });
+  });
+
   it("returns null for missing required fields", () => {
     expect(parseRequestBuffer(Buffer.from(JSON.stringify({ ids: [] })), 1024)).toBeNull();
     expect(parseRequestBuffer(Buffer.from(JSON.stringify({ protocolVersion: 1 })), 1024)).toBeNull();
@@ -96,5 +105,26 @@ describe("protocol", () => {
     expect(config.defaultVault).toBe("default");
     expect(config.vaultPolicy).toBe("default_vault");
     expect(config.vaultWhitelist).toEqual([]);
+  });
+
+  it("fuzzes parser with random utf8 payloads without throwing", () => {
+    let seed = 1337;
+    const next = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed;
+    };
+
+    for (let i = 0; i < 300; i += 1) {
+      const size = (next() % 512) + 1;
+      const bytes = Buffer.alloc(size);
+      for (let j = 0; j < size; j += 1) {
+        bytes[j] = next() & 0xff;
+      }
+      const result = parseRequestBuffer(bytes, 1024);
+      if (result !== null) {
+        expect(Number.isInteger(result.protocolVersion)).toBe(true);
+        expect(Array.isArray(result.ids)).toBe(true);
+      }
+    }
   });
 });
