@@ -1,3 +1,9 @@
+/**
+ * Sanitization and policy helpers:
+ * - Normalize/validate incoming IDs from untrusted protocol input.
+ * - Convert IDs into 1Password references.
+ * - Enforce vault policy for explicit op:// references.
+ */
 export function sanitizeId(id: unknown, allowlist?: RegExp): string | null {
   if (typeof id !== "string") {
     return null;
@@ -45,6 +51,7 @@ export function sanitizeIds(ids: unknown[], maxIds: number, allowlist?: RegExp):
 }
 
 export function mapIdToReference(id: string, vault: string): string {
+  // Explicit refs are treated as caller intent and remain unchanged.
   if (id.startsWith("op://")) {
     return id;
   }
@@ -66,6 +73,7 @@ export function isVaultAllowed(options: {
   vaultPolicy: "default_vault" | "default_vault+whitelist" | "any";
   vaultWhitelist: string[];
 }): boolean {
+  // Policy is applied only after extracting a concrete vault name.
   if (options.vaultPolicy === "any") {
     return true;
   }

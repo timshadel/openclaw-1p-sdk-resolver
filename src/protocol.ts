@@ -2,6 +2,12 @@ import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+/**
+ * Protocol/config boundary:
+ * - Parses untrusted stdin JSON into a strict request shape.
+ * - Loads runtime config from env + JSON file with safe defaults/caps.
+ * - Produces JSON response payloads without side effects.
+ */
 export type RawRequest = {
   protocolVersion?: unknown;
   ids?: unknown;
@@ -82,6 +88,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function resolveConfigPath(env: NodeJS.ProcessEnv): string | undefined {
+  // Explicit env override wins to support deterministic deployment wiring.
   if (env.OP_RESOLVER_CONFIG?.trim()) {
     return env.OP_RESOLVER_CONFIG.trim();
   }
@@ -143,6 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     try {
       allowedIdRegex = new RegExp(fileConfig.allowedIdRegex);
     } catch {
+      // Invalid user regex should fail closed by matching nothing.
       allowedIdRegex = /$a/;
     }
   }
@@ -197,6 +205,7 @@ export function parseRequestBuffer(
   buffer: Buffer,
   maxStdinBytes: number
 ): NormalizedRequest | null {
+  // Reject oversized input before parse to avoid expensive work on untrusted data.
   if (buffer.byteLength > maxStdinBytes) {
     return null;
   }

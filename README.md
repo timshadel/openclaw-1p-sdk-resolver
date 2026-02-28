@@ -84,6 +84,42 @@ Vault source precedence:
 - fallback to legacy `vault` config key
 - fallback to built-in default `"default"`
 
+## Architecture
+
+Current source layout is intentionally small and split by responsibility:
+
+- `src/protocol.ts`
+  - Parses stdin protocol JSON into a strict in-memory shape.
+  - Loads/normalizes config with defaults and hard caps.
+  - Formats response JSON.
+- `src/sanitize.ts`
+  - Validates/sanitizes IDs from untrusted input.
+  - Maps IDs to `op://` references.
+  - Enforces vault policy checks for explicit refs.
+- `src/onepassword.ts`
+  - Thin adapter over `@1password/sdk` using service account auth.
+  - Uses `resolveAll` when available, otherwise concurrency-limited `resolve`.
+  - Returns partial success maps; unresolved refs are omitted.
+- `src/resolver.ts`
+  - Orchestrates the runtime pipeline:
+    - read stdin with size/time caps
+    - parse request
+    - sanitize ids
+    - map/enforce vault policy
+    - resolve refs
+    - emit response
+  - Centralizes fail-closed behavior (always valid JSON, empty `values` on failure).
+
+## Limitations
+
+- Protocol scope is intentionally narrow: OpenClaw `exec` provider with `jsonOnly: true`.
+- Auth mode is service account token only (`OP_SERVICE_ACCOUNT_TOKEN`).
+- Fail-closed behavior does not return per-id error details; unresolved IDs are simply omitted.
+- Resolver may return partial success when some refs resolve and others fail.
+- Timeouts are best-effort guards and can lead to empty responses under network/SDK delay.
+- Vault access is constrained by configured `vaultPolicy` (unless set to `"any"`).
+- This process necessarily places resolved secrets on stdout in the protocol response; stdout/stderr transcripts must be treated as sensitive.
+
 ## Install
 
 ```bash
