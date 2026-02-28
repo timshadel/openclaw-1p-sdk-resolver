@@ -91,6 +91,27 @@ describe("protocol", () => {
     expect(config.defaultVault).toBe("OverrideVault");
   });
 
+  it("falls back to defaults when config file is malformed json", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, "{not-json", "utf8");
+
+    const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
+    expect(config.defaultVault).toBe("default");
+    expect(config.vaultPolicy).toBe("default_vault");
+    expect(config.maxIds).toBe(50);
+    expect(config.concurrency).toBe(4);
+  });
+
+  it("fails closed for invalid allowlist regex in config", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, JSON.stringify({ allowedIdRegex: "[" }), "utf8");
+
+    const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
+    expect(config.allowedIdRegex?.test("anything")).toBe(false);
+  });
+
   it("falls back to legacy vault key", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
     const customConfigPath = path.join(dir, "custom.json");

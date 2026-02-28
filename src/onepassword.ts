@@ -1,8 +1,24 @@
-import { createClient } from "@1password/sdk";
+import { Secrets, createClient } from "@1password/sdk";
 
+/**
+ * Thin 1Password SDK adapter.
+ * - Uses service account client auth from caller.
+ * - Prefers bulk `resolveAll` when available.
+ * - Falls back to concurrency-limited per-ref `resolve`.
+ * - Returns partial success maps; unresolved refs are omitted.
+ */
 export type SecretResolver = {
   resolveRefs(refs: string[], timeoutMs: number, concurrency: number): Promise<Map<string, string>>;
 };
+
+export function isValidSecretReference(secretReference: string): boolean {
+  try {
+    Secrets.validateSecretReference(secretReference);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type MaybeSecretsApi = {
   resolve?: (ref: string) => Promise<string>;
@@ -70,6 +86,7 @@ async function resolveWithConcurrency(
   const values = new Map<string, string>();
   const queue = [...refs];
 
+  // Worker pool bounds in-flight SDK calls and preserves fail-soft semantics.
   const workers = Array.from({ length: Math.min(concurrency, refs.length) }, async () => {
     while (queue.length > 0) {
       const ref = queue.shift();
@@ -118,7 +135,7 @@ export async function createOnePasswordResolver(options: {
           const result = await withTimeout(secrets.resolveAll(refs), timeoutMs);
           return toMapFromResolveAllResult(refs, result);
         } catch {
-          // Fallback to per-ref resolving.
+          // Fall back to per-ref resolving for compatibility/resilience.
         }
       }
 

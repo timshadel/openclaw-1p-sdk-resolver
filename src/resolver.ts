@@ -1,9 +1,16 @@
 import { Buffer } from "node:buffer";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { formatResponse, loadConfig, parseRequestBuffer, type ResponsePayload } from "./protocol.js";
-import { createOnePasswordResolver, type SecretResolver } from "./onepassword.js";
+import { createOnePasswordResolver, isValidSecretReference, type SecretResolver } from "./onepassword.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 
+/**
+ * Resolver orchestration entrypoint.
+ * Pipeline: read stdin -> parse protocol -> sanitize ids -> map/enforce vault policy
+ * -> resolve via 1Password adapter -> emit protocol JSON.
+ *
+ * Security posture: fail closed and always return a valid response payload.
+ */
 export type ResolverRuntime = {
   stdin?: NodeJS.ReadableStream;
   stdout?: NodeJS.WritableStream;
@@ -55,6 +62,7 @@ export async function readStdinWithLimit(
       const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += part.byteLength;
       if (total > maxBytes) {
+        // Size cap violation returns a safe empty response upstream.
         finish({ ok: false, buffer: Buffer.alloc(0) });
         return;
       }
@@ -133,8 +141,12 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
 
   const refToId = new Map<string, string>();
   const refs: string[] = [];
+  // Keep a reverse index so output keys remain original requested IDs.
   for (const id of ids) {
     const ref = mapIdToReference(id, config.defaultVault);
+    if (!isValidSecretReference(ref)) {
+      continue;
+    }
     const vault = extractVaultFromReference(ref);
     if (!vault) {
       continue;
@@ -185,6 +197,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
       values
     });
   } catch {
+    // Any runtime/SDK failure is treated as unresolved to avoid data leakage.
     await writeResponse(stdout, emptyResponse(protocolVersion));
   }
 }
