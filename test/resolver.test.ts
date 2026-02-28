@@ -242,7 +242,18 @@ describe("resolver", () => {
 
   it("enforces stdin max bytes", async () => {
     const stream = stdinFrom("123456");
-    const result = await readStdinWithLimit(stream, 3);
+    const result = await readStdinWithLimit(stream, 3, 1000);
     expect(result.ok).toBe(false);
+  });
+
+  it("times out stdin read when stream does not end", async () => {
+    const stream = new PassThrough();
+    const started = Date.now();
+    const result = await readStdinWithLimit(stream, 1024, 20);
+    const elapsed = Date.now() - started;
+
+    expect(result.ok).toBe(false);
+    expect(elapsed).toBeGreaterThanOrEqual(15);
+    expect(elapsed).toBeLessThan(1000);
   });
 });

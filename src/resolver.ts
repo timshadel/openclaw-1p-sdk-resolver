@@ -29,31 +29,44 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 export async function readStdinWithLimit(
   stream: NodeJS.ReadableStream,
-  maxBytes: number
+  maxBytes: number,
+  timeoutMs: number
 ): Promise<{ ok: boolean; buffer: Buffer }> {
   const chunks: Buffer[] = [];
   let total = 0;
 
   return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const finish = (result: { ok: boolean; buffer: Buffer }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      cleanup();
+      resolve(result);
+    };
+
     const onData = (chunk: Buffer | string) => {
       const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += part.byteLength;
       if (total > maxBytes) {
-        cleanup();
-        resolve({ ok: false, buffer: Buffer.alloc(0) });
+        finish({ ok: false, buffer: Buffer.alloc(0) });
         return;
       }
       chunks.push(part);
     };
 
     const onEnd = () => {
-      cleanup();
-      resolve({ ok: true, buffer: Buffer.concat(chunks) });
+      finish({ ok: true, buffer: Buffer.concat(chunks) });
     };
 
     const onError = () => {
-      cleanup();
-      resolve({ ok: false, buffer: Buffer.alloc(0) });
+      finish({ ok: false, buffer: Buffer.alloc(0) });
     };
 
     const cleanup = () => {
@@ -61,6 +74,10 @@ export async function readStdinWithLimit(
       stream.off("end", onEnd);
       stream.off("error", onError);
     };
+
+    timer = setTimeout(() => {
+      finish({ ok: false, buffer: Buffer.alloc(0) });
+    }, timeoutMs);
 
     stream.on("data", onData);
     stream.on("end", onEnd);
@@ -90,7 +107,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
   const token = env.OP_SERVICE_ACCOUNT_TOKEN?.trim();
   const defaultProtocolVersion = 1;
 
-  const stdinResult = await readStdinWithLimit(stdin, config.maxStdinBytes);
+  const stdinResult = await readStdinWithLimit(stdin, config.maxStdinBytes, config.stdinTimeoutMs);
   if (!stdinResult.ok) {
     await writeResponse(stdout, emptyResponse(defaultProtocolVersion));
     return;
@@ -155,7 +172,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
       config.timeoutMs
     );
 
-    const values: Record<string, string> = {};
+    const values = Object.create(null) as Record<string, string>;
     for (const [ref, value] of resolved.entries()) {
       const id = refToId.get(ref);
       if (id && typeof value === "string") {

@@ -54,6 +54,7 @@ Example config JSON:
   "allowedIdRegex": "^[A-Za-z0-9_\\/-]+$",
   "maxIds": 50,
   "maxStdinBytes": 131072,
+  "stdinTimeoutMs": 5000,
   "timeoutMs": 25000,
   "concurrency": 4,
   "integrationName": "openclaw-1p-sdk-resolver",
@@ -66,6 +67,7 @@ Defaults/caps:
 - `maxIds`: default `50`, hard cap `200`
 - `maxStdinBytes`: default `131072`, hard cap `1048576`
 - `timeoutMs`: default `25000`
+- `stdinTimeoutMs`: default `5000`
 - `concurrency`: default `4`, hard cap `10`
 - `integrationName`: default `openclaw-1p-sdk-resolver`
 - `integrationVersion`: default `1.0.0`

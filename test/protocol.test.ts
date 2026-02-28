@@ -55,6 +55,7 @@ describe("protocol", () => {
         maxStdinBytes: 9999999,
         concurrency: 99,
         timeoutMs: 200,
+        stdinTimeoutMs: 999999,
         allowedIdRegex: "^[A-Za-z0-9_\\/-]+$"
       })
     );
@@ -65,6 +66,7 @@ describe("protocol", () => {
     expect(config.maxStdinBytes).toBe(1024 * 1024);
     expect(config.concurrency).toBe(10);
     expect(config.timeoutMs).toBe(1000);
+    expect(config.stdinTimeoutMs).toBe(120000);
     expect(config.defaultVault).toBe("MainVault");
     expect(config.vaultPolicy).toBe("default_vault+whitelist");
     expect(config.vaultWhitelist).toEqual(["SharedVault"]);

@@ -26,6 +26,7 @@ type FileConfig = {
   maxIds?: unknown;
   maxStdinBytes?: unknown;
   timeoutMs?: unknown;
+  stdinTimeoutMs?: unknown;
   concurrency?: unknown;
   integrationName?: unknown;
   integrationVersion?: unknown;
@@ -37,6 +38,7 @@ const DEFAULTS = {
   maxIds: 50,
   maxStdinBytes: 128 * 1024,
   timeoutMs: 25_000,
+  stdinTimeoutMs: 5_000,
   concurrency: 4,
   integrationName: "openclaw-1p-sdk-resolver",
   integrationVersion: "1.0.0"
@@ -56,6 +58,7 @@ export type RuntimeConfig = {
   maxIds: number;
   maxStdinBytes: number;
   timeoutMs: number;
+  stdinTimeoutMs: number;
   concurrency: number;
   integrationName: string;
   integrationVersion: string;
@@ -124,6 +127,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     CAPS.maxStdinBytes
   );
   const timeoutMs = clamp(parseIntLike(fileConfig.timeoutMs, DEFAULTS.timeoutMs), 1000, 120_000);
+  const stdinTimeoutMs = clamp(
+    parseIntLike(fileConfig.stdinTimeoutMs, DEFAULTS.stdinTimeoutMs),
+    1000,
+    120_000
+  );
   const concurrency = clamp(
     parseIntLike(fileConfig.concurrency, DEFAULTS.concurrency),
     1,
@@ -172,6 +180,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
     maxIds,
     maxStdinBytes,
     timeoutMs,
+    stdinTimeoutMs,
     concurrency,
     integrationName:
       typeof fileConfig.integrationName === "string" && fileConfig.integrationName.trim().length > 0
