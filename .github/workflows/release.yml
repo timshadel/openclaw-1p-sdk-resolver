@@ -1,27 +1,25 @@
 name: Release
 
 on:
-  workflow_dispatch:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
   id-token: write
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  publish:
-    name: npm-publish-with-provenance
+  release:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'timshadel'
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -31,12 +29,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: 24.x
           cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Configure npm for trusted publishing
+        run: |
+          cat > "$RUNNER_TEMP/.npmrc" <<'EOF'
+          registry=https://registry.npmjs.org
+          EOF
+          echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/.npmrc" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          NPM_TOKEN: placeholder
 
       - name: Build
         run: pnpm build
@@ -44,7 +51,13 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Publish to npm with provenance
+      - name: Create Release PR or Publish
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          commit: chore(release): version packages
+          title: chore(release): version packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

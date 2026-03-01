@@ -270,6 +270,31 @@ This repository keeps decision artifacts in two complementary forms:
 
 This project follows [Semantic Versioning 2.0.0](https://semver.org/). Pre-1.0 releases (`0.y.z`) may include breaking changes.
 
+## Release Workflow
+
+Releases are CI-driven with [Changesets](https://github.com/changesets/changesets).
+
+- On merge to `main`, the `Release` workflow either:
+  - opens/updates a release PR with version/changelog updates, or
+  - publishes to npm when release changes are already present on `main`.
+- Publishing runs from GitHub Actions (not developer machines).
+
+Maintainer checklist (one-time setup):
+
+1. In npm package settings for `openclaw-1p-sdk-resolver`, add GitHub repository trusted publishing for this repo/workflow.
+2. In GitHub branch protection, require CI checks on `main`.
+3. Merge release PRs created by Changesets to trigger publish.
+
+Contributor flow:
+
+1. Add a changeset in feature PRs:
+
+```bash
+pnpm changeset
+```
+
+2. Commit the generated `.changeset/*.md` file with the code change.
+
 ## Distribution
 
 - Primary registry: npm (`openclaw-1p-sdk-resolver`).
