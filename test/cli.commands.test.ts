@@ -137,6 +137,54 @@ describe("command cli", () => {
     expect(parsed.vaultPolicy).toBe("default_vault");
   });
 
+  it("config path human output uses table format", async () => {
+    const streams = createStreams();
+    const code = await runCli(["config", "path"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("CONFIG PATH");
+    expect(streams.out.stdout).toContain("| Field");
+    expect(streams.out.stdout).toContain("| Path");
+    expect(streams.out.stdout).toContain("| Exists");
+    expect(streams.out.stdout).toContain("| Readable");
+    expect(streams.out.stdout.includes("\t")).toBe(false);
+  });
+
+  it("config show human output uses effective configuration table", async () => {
+    const streams = createStreams();
+    const code = await runCli(["config", "show"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("EFFECTIVE CONFIGURATION");
+    expect(streams.out.stdout).toContain("| Key");
+    expect(streams.out.stdout).toContain("| Effective Value");
+    expect(streams.out.stdout).toContain("| Source");
+    expect(streams.out.stdout.includes("\t")).toBe(false);
+  });
+
+  it("openclaw snippet human output uses table format", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("OPENCLAW PROVIDER SNIPPET");
+    expect(streams.out.stdout).toContain("| Field");
+    expect(streams.out.stdout).toContain("| Command");
+    expect(streams.out.stdout.includes("\t")).toBe(false);
+  });
+
   it("resolve returns redacted values by default", async () => {
     const streams = createStreams();
     const resolver: SecretResolver = {
@@ -208,5 +256,35 @@ describe("command cli", () => {
 
     expect(yesCode).toBe(0);
     expect(yesStreams.out.stdout.includes("revealed-secret")).toBe(true);
+  });
+
+  it("resolve human output uses table format", async () => {
+    const streams = createStreams();
+    const resolver: SecretResolver = {
+      resolveRefs: async (refs: string[]) => {
+        const out = new Map<string, string>();
+        for (const ref of refs) {
+          out.set(ref, "secret-value");
+        }
+        return out;
+      }
+    };
+
+    const code = await runCli(["resolve", "--id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "default" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      resolver,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("RESOLVE RESULTS");
+    expect(streams.out.stdout).toContain("| ID");
+    expect(streams.out.stdout).toContain("| Status");
+    expect(streams.out.stdout).toContain("| Output");
+    expect(streams.out.stdout.includes("\t")).toBe(false);
   });
 });

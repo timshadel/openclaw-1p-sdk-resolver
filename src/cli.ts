@@ -196,6 +196,16 @@ function renderAsciiTable(columns: TableColumn[], rows: string[][]): string {
   return lines.join("\n");
 }
 
+function renderTwoColumnTable(title: string, rows: Array<[string, string]>, widths = { key: 36, value: 100 }): string {
+  return `${title}\n${renderAsciiTable(
+    [
+      { header: "Field", maxWidth: widths.key },
+      { header: "Value", maxWidth: widths.value }
+    ],
+    rows
+  )}\n`;
+}
+
 function summarizeIssues(issues: ConfigIssue[]): { ok: boolean; warnings: number; errors: number } {
   const warnings = issues.filter((issue) => issue.level === "warning").length;
   const errors = issues.filter((issue) => issue.level === "error").length;
@@ -398,9 +408,15 @@ function runConfigPath(args: string[], runtime: CliRuntime): ExitResult {
   if (asJson) {
     printJson(streams.stdout, payload);
   } else {
-    streams.stdout.write(`${payload.path ?? "(unresolved)"}\n`);
-    streams.stdout.write(`source=${payload.source} exists=${payload.exists ? "yes" : "no"} readable=${payload.readable ? "yes" : "no"}\n`);
-    streams.stdout.write(`${payload.reason}\n`);
+    streams.stdout.write(
+      renderTwoColumnTable("CONFIG PATH", [
+        ["Path", payload.path ?? "(unresolved)"],
+        ["Source", payload.source],
+        ["Exists", payload.exists ? "yes" : "no"],
+        ["Readable", payload.readable ? "yes" : "no"],
+        ["Reason", payload.reason]
+      ])
+    );
   }
 
   return { code: 0 };
@@ -413,6 +429,7 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
   const showDefaults = hasFlag(flags, "defaults");
   const showCurrentFile = hasFlag(flags, "current-file");
   const verbose = hasFlag(flags, "verbose");
+  const asJson = hasFlag(flags, "json");
 
   const effective = loadEffectiveConfig({ env });
 
@@ -428,7 +445,17 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
     const raw = effective.file.rawText ?? readFileSync(effective.path.path, "utf8");
     try {
       const parsed = JSON.parse(raw) as unknown;
-      printJson(streams.stdout, parsed);
+      if (asJson) {
+        printJson(streams.stdout, parsed);
+      } else {
+        const entries = Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, displayValue(value)]);
+        streams.stdout.write(
+          renderTwoColumnTable("CURRENT CONFIG FILE", entries as Array<[string, string]>, {
+            key: 36,
+            value: 100
+          })
+        );
+      }
       return { code: 0 };
     } catch {
       streams.stderr.write("Config file is not valid JSON.\n");
@@ -437,7 +464,15 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
   }
 
   if (showDefaults) {
-    printJson(streams.stdout, toSerializableConfig(effective.defaults));
+    if (asJson) {
+      printJson(streams.stdout, toSerializableConfig(effective.defaults));
+    } else {
+      const rows = Object.entries(toSerializableConfig(effective.defaults)).map(([key, value]) => [
+        key,
+        displayValue(value)
+      ]);
+      streams.stdout.write(renderTwoColumnTable("DEFAULT CONFIGURATION", rows as Array<[string, string]>));
+    }
     return { code: 0 };
   }
 
@@ -450,7 +485,63 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
     payload.issues = effective.issues;
   }
 
-  printJson(streams.stdout, payload);
+  if (asJson) {
+    printJson(streams.stdout, payload);
+  } else {
+    const rows = Object.entries(effective.provenance).map(([key, entry]) => {
+      const value = key === "allowedIdRegex" && entry.value instanceof RegExp ? entry.value.source : entry.value;
+      return [key, displayValue(value), entry.source, entry.notes.length > 0 ? entry.notes.join(" | ") : "-"];
+    });
+    streams.stdout.write("EFFECTIVE CONFIGURATION\n");
+    streams.stdout.write(
+      `${renderAsciiTable(
+        [
+          { header: "Key", maxWidth: 24 },
+          { header: "Effective Value", maxWidth: 50 },
+          { header: "Source", maxWidth: 16 },
+          { header: "Notes", maxWidth: 72 }
+        ],
+        rows
+      )}\n`
+    );
+    if (verbose) {
+      streams.stdout.write("\nCONFIG PATH\n");
+      streams.stdout.write(
+        `${renderAsciiTable(
+          [
+            { header: "Field", maxWidth: 30 },
+            { header: "Value", maxWidth: 100 }
+          ],
+          [
+            ["Path", effective.path.path ?? "(unresolved)"],
+            ["Source", effective.path.source],
+            ["Exists", effective.path.exists ? "yes" : "no"],
+            ["Readable", effective.path.readable ? "yes" : "no"],
+            ["Reason", effective.path.reason]
+          ]
+        )}\n`
+      );
+      streams.stdout.write("\nVALIDATION ISSUES\n");
+      streams.stdout.write(
+        `${renderAsciiTable(
+          [
+            { header: "Level", maxWidth: 8 },
+            { header: "Code", maxWidth: 28 },
+            { header: "Key", maxWidth: 20 },
+            { header: "Message", maxWidth: 96 }
+          ],
+          effective.issues.length > 0
+            ? effective.issues.map((issue) => [
+                issue.level.toUpperCase(),
+                issue.code,
+                issue.key ?? "-",
+                issue.message
+              ])
+            : [["-", "-", "-", "No validation issues."]]
+        )}\n`
+      );
+    }
+  }
   return { code: hasConfigErrors(effective) ? 2 : 0 };
 }
 
@@ -484,10 +575,21 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
       dryRun: !doWrite
     });
   } else {
-    streams.stdout.write(`Path: ${effective.path.path}\n`);
+    streams.stdout.write(
+      renderTwoColumnTable("CONFIG INITIALIZATION", [
+        ["Path", effective.path.path],
+        ["Dry Run", !doWrite ? "yes" : "no"],
+        ["Write Requested", doWrite ? "yes" : "no"],
+        ["Overwrite Requested", force ? "yes" : "no"]
+      ])
+    );
     if (!doWrite) {
-      streams.stdout.write("Dry-run; pass --write to persist.\n");
-      streams.stdout.write(body);
+      streams.stdout.write(
+        renderTwoColumnTable("MINIMAL CONFIG CONTENT", [
+          ["defaultVault", "default"],
+          ["vaultPolicy", "default_vault"]
+        ])
+      );
     }
   }
 
@@ -510,7 +612,12 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
   }
 
   if (!asJson) {
-    streams.stdout.write("Config written.\n");
+    streams.stdout.write(
+      renderTwoColumnTable("WRITE RESULT", [
+        ["Status", "written"],
+        ["Path", effective.path.path]
+      ])
+    );
   }
   return { code: 0 };
 }
@@ -544,8 +651,16 @@ function runOpenclawSnippet(args: string[], runtime: CliRuntime): ExitResult {
   if (asJson) {
     printJson(streams.stdout, snippet);
   } else {
-    streams.stdout.write("Paste into your openclaw.json providers section:\n");
-    printJson(streams.stdout, snippet);
+    streams.stdout.write(
+      renderTwoColumnTable("OPENCLAW PROVIDER SNIPPET", [
+        ["Provider Name", "onepassword"],
+        ["Kind", "exec"],
+        ["jsonOnly", "true"],
+        ["Command", commandHint],
+        ["passEnv", "HOME, OP_SERVICE_ACCOUNT_TOKEN, OP_RESOLVER_CONFIG"],
+        ["trustedDirs", "$HOME/.local/bin, $HOME/bin"]
+      ])
+    );
   }
 
   return { code: 0 };
@@ -683,10 +798,17 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
         results: rows
       });
     } else {
-      streams.stdout.write("id\tstatus\toutput\n");
-      for (const row of rows) {
-        streams.stdout.write(`${row.id}\t${row.status}\t${row.output}\n`);
-      }
+      streams.stdout.write("RESOLVE RESULTS\n");
+      streams.stdout.write(
+        `${renderAsciiTable(
+          [
+            { header: "ID", maxWidth: 56 },
+            { header: "Status", maxWidth: 12 },
+            { header: "Output", maxWidth: 96 }
+          ],
+          rows.map((row) => [row.id, row.status, row.output])
+        )}\n`
+      );
     }
 
     return {
