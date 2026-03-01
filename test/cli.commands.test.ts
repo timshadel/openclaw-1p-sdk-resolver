@@ -61,6 +61,32 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes(token)).toBe(false);
   });
 
+  it("doctor human output uses aligned fields and ascii table columns", async () => {
+    const streams = createStreams();
+
+    const code = await runCli(["doctor"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
+    });
+
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("Doctor Report");
+    expect(streams.out.stdout).toMatch(/Config path source\s+:/);
+    expect(streams.out.stdout).toContain("+");
+    expect(streams.out.stdout).toContain("| Key");
+    expect(streams.out.stdout).toContain("| Effective Value");
+    expect(streams.out.stdout.includes("\t")).toBe(false);
+    expect(streams.out.stdout).toContain("| allowedIdRegex");
+    expect(streams.out.stdout).toContain("| -");
+  });
+
   it("config init is dry-run by default and writes only with --write, respecting --force", async () => {
     const home = path.join(tmpdir(), `onep-cli-init-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const configPath = path.join(home, ".config", "openclaw-1p-sdk-resolver", "config.json");

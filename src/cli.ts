@@ -31,6 +31,11 @@ type ExitResult = {
   code: number;
 };
 
+type TableColumn = {
+  header: string;
+  maxWidth?: number;
+};
+
 function normalizeStreams(runtime: CliRuntime): CliStreams {
   return {
     stdin: runtime.streams?.stdin ?? processStdin,
@@ -133,6 +138,86 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--reveal --yes]\n`);
 }
 
+function truncateCell(value: string, maxWidth: number): string {
+  if (value.length <= maxWidth) {
+    return value;
+  }
+  if (maxWidth <= 3) {
+    return value.slice(0, maxWidth);
+  }
+  return `${value.slice(0, maxWidth - 3)}...`;
+}
+
+function padRight(value: string, width: number): string {
+  return value.padEnd(width, " ");
+}
+
+function displayValue(value: unknown): string {
+  if (value === undefined) {
+    return "-";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (value instanceof RegExp) {
+    return value.source;
+  }
+  const serialized = JSON.stringify(value);
+  if (typeof serialized === "string") {
+    return serialized;
+  }
+  return String(value);
+}
+
+function renderAsciiTable(columns: TableColumn[], rows: string[][]): string {
+  const widths = columns.map((column, index) => {
+    const contentWidths = rows.map((row) => row[index]?.length ?? 0);
+    const widestContent = Math.max(column.header.length, ...contentWidths);
+    if (column.maxWidth && column.maxWidth > 0) {
+      return Math.min(widestContent, column.maxWidth);
+    }
+    return widestContent;
+  });
+
+  const divider = `+${widths.map((width) => "-".repeat(width + 2)).join("+")}+`;
+  const renderRow = (cells: string[]): string => {
+    const parts = cells.map((cell, index) => {
+      const normalized = truncateCell(cell ?? "", widths[index]);
+      return ` ${padRight(normalized, widths[index])} `;
+    });
+    return `|${parts.join("|")}|`;
+  };
+
+  const lines = [divider, renderRow(columns.map((column) => column.header)), divider];
+  for (const row of rows) {
+    lines.push(renderRow(row));
+  }
+  lines.push(divider);
+  return lines.join("\n");
+}
+
+function renderStatusDetails(options: {
+  pathSource: string;
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  loaded: boolean;
+  tokenPresent: boolean;
+  sdkStatus: string;
+}): string {
+  const statusRows = [
+    ["Config path source", options.pathSource],
+    ["Config path", options.path],
+    ["Config exists/readable", `${options.exists ? "yes" : "no"}/${options.readable ? "yes" : "no"}`],
+    ["Config loaded", options.loaded ? "yes" : "no"],
+    ["Token present", options.tokenPresent ? "yes" : "no"],
+    ["SDK status", options.sdkStatus]
+  ];
+
+  const keyWidth = Math.max(...statusRows.map(([key]) => key.length));
+  return statusRows.map(([key, value]) => `${key.padEnd(keyWidth, " ")} : ${value}`).join("\n");
+}
+
 function summarizeIssues(issues: ConfigIssue[]): { ok: boolean; warnings: number; errors: number } {
   const warnings = issues.filter((issue) => issue.level === "warning").length;
   const errors = issues.filter((issue) => issue.level === "error").length;
@@ -231,18 +316,33 @@ async function runDoctor(args: string[], runtime: CliRuntime): Promise<ExitResul
     printJson(streams.stdout, payload);
   } else {
     streams.stdout.write("Doctor Report\n");
-    streams.stdout.write(`Config path source: ${effective.path.source}\n`);
-    streams.stdout.write(`Config path: ${effective.path.path ?? "(unresolved)"}\n`);
-    streams.stdout.write(`Config exists/readable: ${effective.path.exists ? "yes" : "no"}/${effective.path.readable ? "yes" : "no"}\n`);
-    streams.stdout.write(`Config loaded: ${effective.file.loaded ? "yes" : "no"}\n`);
-    streams.stdout.write(`Token present: ${tokenPresent ? "yes" : "no"}\n`);
-    streams.stdout.write(`SDK status: ${sdkStatus}\n\n`);
+    streams.stdout.write(
+      `${renderStatusDetails({
+        pathSource: effective.path.source,
+        path: effective.path.path ?? "(unresolved)",
+        exists: effective.path.exists,
+        readable: effective.path.readable,
+        loaded: effective.file.loaded,
+        tokenPresent,
+        sdkStatus
+      })}\n\n`
+    );
     streams.stdout.write("Effective config\n");
-    streams.stdout.write("key\tvalue\tsource\tnotes\n");
-    for (const [key, entry] of Object.entries(effective.provenance)) {
+    const configRows = Object.entries(effective.provenance).map(([key, entry]) => {
       const value = key === "allowedIdRegex" && entry.value instanceof RegExp ? entry.value.source : entry.value;
-      streams.stdout.write(`${key}\t${JSON.stringify(value)}\t${entry.source}\t${entry.notes.join(" | ")}\n`);
-    }
+      return [key, displayValue(value), entry.source, entry.notes.length > 0 ? entry.notes.join(" | ") : "-"];
+    });
+    streams.stdout.write(
+      `${renderAsciiTable(
+        [
+          { header: "Key", maxWidth: 24 },
+          { header: "Effective Value", maxWidth: 50 },
+          { header: "Source", maxWidth: 16 },
+          { header: "Notes", maxWidth: 72 }
+        ],
+        configRows
+      )}\n`
+    );
     streams.stdout.write("\nValidation\n");
     streams.stdout.write(`warnings=${summary.warnings} errors=${summary.errors}\n`);
     for (const issue of effective.issues) {
