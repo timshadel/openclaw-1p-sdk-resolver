@@ -278,39 +278,30 @@ function canRead(filePath: string): boolean {
 }
 
 function extractProviders(root: Record<string, unknown>): Array<Record<string, unknown>> {
-  const topLevelProviders = root.providers;
-  if (Array.isArray(topLevelProviders)) {
-    return topLevelProviders.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object");
-  }
-
   const secrets = root.secrets as Record<string, unknown> | undefined;
   if (!secrets || typeof secrets !== "object") {
     return [];
   }
 
   const providers = secrets.providers;
-  if (Array.isArray(providers)) {
-    return providers.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object");
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+    return [];
   }
 
-  if (providers && typeof providers === "object") {
-    return Object.entries(providers as Record<string, unknown>)
-      .filter(([, value]) => !!value && typeof value === "object")
-      .map(([name, value]) => {
-        const providerObject = value as Record<string, unknown>;
-        return {
-          name,
-          kind: providerObject.source,
-          config: {
-            command: providerObject.command,
-            jsonOnly: providerObject.jsonOnly,
-            passEnv: providerObject.passEnv
-          }
-        };
-      });
-  }
-
-  return [];
+  return Object.entries(providers as Record<string, unknown>)
+    .filter(([, value]) => !!value && typeof value === "object")
+    .map(([name, value]) => {
+      const providerObject = value as Record<string, unknown>;
+      return {
+        name,
+        kind: providerObject.source,
+        config: {
+          command: providerObject.command,
+          jsonOnly: providerObject.jsonOnly,
+          passEnv: providerObject.passEnv
+        }
+      };
+    });
 }
 
 function cleanString(value: unknown): string | undefined {

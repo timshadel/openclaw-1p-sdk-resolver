@@ -511,6 +511,61 @@ describe("command cli", () => {
     expect(err.endsWith("\n\n")).toBe(true);
   });
 
+  it("openclaw snippet preserves valid absolute entryScriptPath command hint", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath: "/usr/local/bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
+  });
+
+  it("openclaw snippet uses placeholder for package-manager internal entryScriptPath", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath:
+        "/Users/me/.local/share/pnpm/global/5/.pnpm/openclaw-1p-sdk-resolver@0.1.0/node_modules/openclaw-1p-sdk-resolver/bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/path/to/openclaw-1p-sdk-resolver");
+  });
+
+  it("openclaw snippet uses placeholder for relative entryScriptPath", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath: "./bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/path/to/openclaw-1p-sdk-resolver");
+  });
+
   it("openclaw snippet supports --explain and --quiet precedence", async () => {
     const explainStreams = createStreams();
     const explainCode = await runCli(["openclaw", "snippet", "--explain"], {
@@ -659,17 +714,14 @@ describe("command cli", () => {
       cfg,
       JSON.stringify({
         secrets: {
-          providers: [
-            {
-              name: "resolver",
-              kind: "exec",
-              config: {
-                jsonOnly: true,
-                command: "/abs/path/openclaw-1p-sdk-resolver",
-                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
-              }
+          providers: {
+            "1p-sdk-resolver": {
+              source: "exec",
+              command: "/abs/path/openclaw-1p-sdk-resolver",
+              jsonOnly: true,
+              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
             }
-          ]
+          }
         }
       }),
       "utf8"
