@@ -274,16 +274,19 @@ This project follows [Semantic Versioning 2.0.0](https://semver.org/). Pre-1.0 r
 
 Releases are CI-driven with [Changesets](https://github.com/changesets/changesets).
 
-- On merge to `main`, the `Release` workflow either:
-  - opens/updates a release PR with version/changelog updates, or
-  - publishes to npm when release changes are already present on `main`.
+- Releases are intentionally triggered via `Release` workflow dispatch (not on every merge).
+- Workflow modes:
+  - `prepare`: opens/updates a release PR with version/changelog updates.
+  - `publish`: publishes from `main` to npm via trusted publishing.
 - Publishing runs from GitHub Actions (not developer machines).
 
 Maintainer checklist (one-time setup):
 
 1. In npm package settings for `openclaw-1p-sdk-resolver`, add GitHub repository trusted publishing for this repo/workflow.
 2. In GitHub branch protection, require CI checks on `main`.
-3. Merge release PRs created by Changesets to trigger publish.
+3. Trigger `Release` with mode `prepare` from `main` to create/update the release PR.
+4. Merge the release PR.
+5. Trigger `Release` with mode `publish` from `main` to publish intentionally.
 
 Contributor flow:
 
