@@ -450,6 +450,7 @@ describe("command cli", () => {
     expect(parsed.providers[0].kind).toBe("exec");
     expect(parsed.providers[0].config.jsonOnly).toBe(true);
     expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    expect(streams.out.stderr).toBe("");
   });
 
   it("openclaw snippet supports provider and command overrides", async () => {
@@ -472,6 +473,69 @@ describe("command cli", () => {
     expect(parsed.providers[0].config.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
     expect(parsed.providers[0].config.jsonOnly).toBe(true);
     expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    expect(streams.out.stderr).toBe("");
+  });
+
+  it("openclaw snippet prints instructions on tty stderr by default", async () => {
+    const stdin = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const stdout = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
+    stdin.isTTY = false;
+    stdout.isTTY = false;
+    stderr.isTTY = true;
+    let out = "";
+    let err = "";
+    stdout.on("data", (chunk: Buffer | string) => {
+      out += chunk.toString();
+    });
+    stderr.on("data", (chunk: Buffer | string) => {
+      err += chunk.toString();
+    });
+
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: { stdin, stdout, stderr },
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(EXIT_POLICY.OK);
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(err).toContain("Paste this JSON into secrets.providers");
+  });
+
+  it("openclaw snippet supports --explain and --quiet precedence", async () => {
+    const explainStreams = createStreams();
+    const explainCode = await runCli(["openclaw", "snippet", "--explain"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: explainStreams,
+      runResolver: async () => undefined
+    });
+    expect(explainCode).toBe(EXIT_POLICY.OK);
+    expect(explainStreams.out.stderr).toContain("This tool does not edit OpenClaw files.");
+
+    const ttyIn = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const ttyOut = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const ttyErr = new PassThrough() as PassThrough & { isTTY?: boolean };
+    ttyErr.isTTY = true;
+    let quietErr = "";
+    ttyErr.on("data", (chunk: Buffer | string) => {
+      quietErr += chunk.toString();
+    });
+    const quietCode = await runCli(["openclaw", "snippet", "--quiet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: { stdin: ttyIn, stdout: ttyOut, stderr: ttyErr },
+      runResolver: async () => undefined
+    });
+    expect(quietCode).toBe(EXIT_POLICY.OK);
+    expect(quietErr).toBe("");
+
+    const precedenceStreams = createStreams();
+    const precedenceCode = await runCli(["openclaw", "snippet", "--quiet", "--explain"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: precedenceStreams,
+      runResolver: async () => undefined
+    });
+    expect(precedenceCode).toBe(EXIT_POLICY.OK);
+    expect(precedenceStreams.out.stderr).toBe("");
   });
 
   it("openclaw check --json reports provider findings and sdk status", async () => {
@@ -778,6 +842,52 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes("hidden-secret")).toBe(false);
   });
 
+  it("onepassword diagnose reports configured allowedIdRegex policy state", async () => {
+    const home = createHomeWithConfig({
+      defaultVault: "MainVault",
+      vaultPolicy: "default_vault",
+      allowedIdRegex: "^[A-Za-z0-9_\\/-]+$"
+    });
+    const streams = createStreams();
+    const code = await runCli(["onepassword", "diagnose", "--json"], {
+      env: {
+        HOME: home,
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
+    });
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as { policy: { allowedIdRegexState: string } };
+    expect(parsed.policy.allowedIdRegexState).toBe("configured");
+  });
+
+  it("onepassword diagnose reports fail-closed allowedIdRegex policy state", async () => {
+    const home = createHomeWithConfig({
+      defaultVault: "MainVault",
+      vaultPolicy: "default_vault",
+      allowedIdRegex: "["
+    });
+    const streams = createStreams();
+    const code = await runCli(["onepassword", "diagnose", "--json"], {
+      env: {
+        HOME: home,
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
+    });
+    expect(code).toBe(EXIT_POLICY.ERROR);
+    const parsed = JSON.parse(streams.out.stdout) as { policy: { allowedIdRegexState: string } };
+    expect(parsed.policy.allowedIdRegexState).toBe("fail-closed");
+  });
+
   it("onepassword snippet outputs minimal/full json and enforces defaultVault requirement", async () => {
     const missingStreams = createStreams();
     const missingCode = await runCli(["onepassword", "snippet"], {
@@ -819,6 +929,50 @@ describe("command cli", () => {
     const fullParsed = JSON.parse(fullStreams.out.stdout) as Record<string, unknown>;
     expect(fullParsed.defaultVault).toBe("FullVault");
     expect(fullParsed.maxIds).toBeDefined();
+  });
+
+  it("onepassword snippet prints tty instructions and supports explain/quiet controls", async () => {
+    const stdin = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const stdout = new PassThrough() as PassThrough & { isTTY?: boolean };
+    const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
+    stderr.isTTY = true;
+    let out = "";
+    let err = "";
+    stdout.on("data", (chunk: Buffer | string) => {
+      out += chunk.toString();
+    });
+    stderr.on("data", (chunk: Buffer | string) => {
+      err += chunk.toString();
+    });
+    const code = await runCli(["onepassword", "snippet", "--default-vault", "MainVault"], {
+      env: {},
+      streams: { stdin, stdout, stderr },
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(EXIT_POLICY.OK);
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(err).toContain("No tokens or secret values are included.");
+
+    const explainStreams = createStreams();
+    const explainCode = await runCli(["onepassword", "snippet", "--default-vault", "MainVault", "--explain"], {
+      env: {},
+      streams: explainStreams,
+      runResolver: async () => undefined
+    });
+    expect(explainCode).toBe(EXIT_POLICY.OK);
+    expect(explainStreams.out.stderr).toContain("Save this JSON as resolver config");
+
+    const quietStreams = createStreams();
+    const quietCode = await runCli(
+      ["onepassword", "snippet", "--default-vault", "MainVault", "--quiet", "--explain"],
+      {
+        env: {},
+        streams: quietStreams,
+        runResolver: async () => undefined
+      }
+    );
+    expect(quietCode).toBe(EXIT_POLICY.OK);
+    expect(quietStreams.out.stderr).toBe("");
   });
 
   it("resolve returns redacted values by default", async () => {

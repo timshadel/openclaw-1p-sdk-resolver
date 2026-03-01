@@ -100,11 +100,11 @@ openclaw-1p-sdk-resolver config path [--json]
 openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]
 openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]
 openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]
-openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>]
+openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]
 openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]
 openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
 openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]
-openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json]
+openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]
 openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--debug] [--reveal --yes]
 ```
 
@@ -119,13 +119,17 @@ Notes:
   - verifies 1Password connectivity sanity (token present + SDK init probe)
   - returns findings with actionable next steps
 - `openclaw diagnose` provides deeper troubleshooting details including resolver config/provenance.
-- `openclaw snippet` prints provider JSON only so it can be pasted directly into OpenClaw config.
+- `openclaw snippet` prints provider JSON only on `stdout` so it can be pasted directly into OpenClaw config.
 - `onepassword check` is the high-signal 1Password readiness command:
   - validates resolver config
   - checks token presence and SDK init status
   - optionally probes a specific id/ref safely via `--probe-id` (never prints values)
 - `onepassword diagnose` provides deep resolver and policy diagnostics.
-- `onepassword snippet` prints resolver config JSON only (minimal by default, full config with `--full`).
+- `onepassword snippet` prints resolver config JSON only on `stdout` (minimal by default, full config with `--full`).
+- Snippet instruction text is emitted on `stderr` only:
+  - default: only when `stderr` is a TTY
+  - `--explain`: force instructions on `stderr`
+  - `--quiet`: suppress instructions (`--quiet` wins over `--explain`)
 - `resolve` is redacted by default and never prints secret values unless `--reveal` is used.
 - `resolve --debug` adds safe reason codes for unresolved ids (for example `policy-blocked`, `invalid-ref`, `sdk-unresolved`) without revealing secrets.
 - `resolve --reveal` requires explicit consent:
@@ -171,6 +175,7 @@ The snippet includes:
 - `passEnv`: `HOME`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_RESOLVER_CONFIG`
 - `trustedDirs` suggestions
 - This tool never edits OpenClaw files; paste snippet output manually.
+- Snippet JSON is always written to `stdout`; optional guidance is written to `stderr`.
 
 ## Two-Sided Checks
 

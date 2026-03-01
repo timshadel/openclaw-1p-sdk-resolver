@@ -101,6 +101,20 @@ function toSerializableProvenance(config) {
 function printJson(stream, value) {
     stream.write(`${JSON.stringify(value, null, 2)}\n`);
 }
+function shouldPrintSnippetInstructions(flags, streams) {
+    if (hasFlag(flags, "quiet")) {
+        return false;
+    }
+    if (hasFlag(flags, "explain")) {
+        return true;
+    }
+    return Boolean(streams.stderr.isTTY);
+}
+function printSnippetInstructions(stream, lines) {
+    for (const line of lines) {
+        stream.write(`${line}\n`);
+    }
+}
 function printUsage(stream) {
     stream.write(`openclaw-1p-sdk-resolver\n\n`);
     stream.write(`Usage:\n`);
@@ -109,12 +123,12 @@ function printUsage(stream) {
     stream.write(`  openclaw-1p-sdk-resolver config path [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
     stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`);
     stream.write(`  openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]\n`);
     stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`);
 }
 export function truncateCell(value, maxWidth) {
@@ -674,6 +688,12 @@ function runOpenclawSnippet(args, context) {
         (path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
             ? invokedPath
             : "/absolute/path/to/openclaw-1p-sdk-resolver");
+    if (shouldPrintSnippetInstructions(flags, streams)) {
+        printSnippetInstructions(streams.stderr, [
+            "Paste this JSON into secrets.providers in your OpenClaw config.",
+            "This tool does not edit OpenClaw files."
+        ]);
+    }
     const snippet = buildResolverProviderSnippet({ commandHint, providerAlias });
     printJson(streams.stdout, snippet);
     return { code: EXIT_POLICY.OK };
@@ -1173,6 +1193,12 @@ function runOnepasswordSnippet(args, context) {
             defaultVault: selectedDefaultVault,
             vaultPolicy: "default_vault"
         };
+    if (shouldPrintSnippetInstructions(flags, streams)) {
+        printSnippetInstructions(streams.stderr, [
+            "Save this JSON as resolver config (.../openclaw-1p-sdk-resolver/config.json) if needed.",
+            "No tokens or secret values are included."
+        ]);
+    }
     printJson(streams.stdout, snippet);
     return { code: EXIT_POLICY.OK };
 }
