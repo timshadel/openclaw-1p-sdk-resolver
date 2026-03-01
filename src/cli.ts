@@ -14,13 +14,13 @@ import {
 import path from "node:path";
 import { stdin as processStdin, stdout as processStdout, stderr as processStderr } from "node:process";
 import readline from "node:readline/promises";
+import { EXIT_POLICY, type ExitCode } from "./exit-policy.js";
 import { createOnePasswordResolver, isValidSecretReference, type SecretResolver } from "./onepassword.js";
 import {
-  collectOpenclawReferences,
+  buildResolverProviderSnippet,
+  checkOpenclawProviderSetup,
   parseOpenclawConfigText,
-  resolveOpenclawConfigPath,
-  scanRepositoryForSecretCandidates,
-  suggestOpenclawProviderImprovements
+  resolveOpenclawConfigPath
 } from "./openclaw.js";
 import { loadEffectiveConfig, type ConfigIssue, type EffectiveConfig } from "./protocol.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
@@ -34,6 +34,7 @@ type CliStreams = {
 type CliRuntime = {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  entryScriptPath?: string;
   streams?: Partial<CliStreams>;
   resolver?: SecretResolver;
   createResolver?: typeof createOnePasswordResolver;
@@ -47,7 +48,14 @@ type CliRuntime = {
 };
 
 type ExitResult = {
-  code: number;
+  code: ExitCode;
+};
+
+type CliExecutionContext = {
+  env: NodeJS.ProcessEnv;
+  streams: CliStreams;
+  cwd: string;
+  entryScriptPath?: string;
 };
 
 type TableColumn = {
@@ -73,6 +81,15 @@ function normalizeStreams(runtime: CliRuntime): CliStreams {
     stdin: runtime.streams?.stdin ?? processStdin,
     stdout: runtime.streams?.stdout ?? processStdout,
     stderr: runtime.streams?.stderr ?? processStderr
+  };
+}
+
+function normalizeExecutionContext(runtime: CliRuntime): CliExecutionContext {
+  return {
+    env: runtime.env ?? process.env,
+    streams: normalizeStreams(runtime),
+    cwd: runtime.cwd ?? process.cwd(),
+    entryScriptPath: runtime.entryScriptPath ?? process.argv[1]
   };
 }
 
@@ -178,8 +195,9 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver config path [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver openclaw audit [scan|suggest] [--path <openclaw.json>] [--repo <dir>] [--json]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]\n`);
   stream.write(
     `  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`
   );
@@ -454,9 +472,8 @@ async function confirmRevealWithPrompt(streams: CliStreams): Promise<boolean> {
   }
 }
 
-async function runDoctor(args: string[], runtime: CliRuntime): Promise<ExitResult> {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
+async function runDoctor(args: string[], context: CliExecutionContext, runtime: CliRuntime): Promise<ExitResult> {
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const asJson = hasFlag(flags, "json");
   const tokenPresent = Boolean(env.OP_SERVICE_ACCOUNT_TOKEN?.trim());
@@ -578,17 +595,16 @@ async function runDoctor(args: string[], runtime: CliRuntime): Promise<ExitResul
   }
 
   if (sdkStatus === "error") {
-    return { code: 3 };
+    return { code: EXIT_POLICY.RUNTIME };
   }
   if (summary.errors > 0 || !tokenPresent) {
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
-  return { code: 0 };
+  return { code: EXIT_POLICY.OK };
 }
 
-function runConfigPath(args: string[], runtime: CliRuntime): ExitResult {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
+function runConfigPath(args: string[], context: CliExecutionContext): ExitResult {
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const asJson = hasFlag(flags, "json");
   const effective = loadEffectiveConfig({ env });
@@ -615,12 +631,11 @@ function runConfigPath(args: string[], runtime: CliRuntime): ExitResult {
     );
   }
 
-  return { code: 0 };
+  return { code: EXIT_POLICY.OK };
 }
 
-function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
+function runConfigShow(args: string[], context: CliExecutionContext): ExitResult {
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const showDefaults = hasFlag(flags, "defaults");
   const showCurrentFile = hasFlag(flags, "current-file");
@@ -632,11 +647,11 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
   if (showCurrentFile) {
     if (!effective.path.path || !effective.path.exists) {
       streams.stderr.write("No config file exists at resolved path.\n");
-      return { code: 2 };
+      return { code: EXIT_POLICY.ERROR };
     }
     if (!effective.path.readable) {
       streams.stderr.write("Resolved config file is not readable.\n");
-      return { code: 2 };
+      return { code: EXIT_POLICY.ERROR };
     }
     const raw = effective.file.rawText ?? readFileSync(effective.path.path, "utf8");
     try {
@@ -652,10 +667,10 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
           })
         );
       }
-      return { code: 0 };
+      return { code: EXIT_POLICY.OK };
     } catch {
       streams.stderr.write("Config file is not valid JSON.\n");
-      return { code: 2 };
+      return { code: EXIT_POLICY.ERROR };
     }
   }
 
@@ -669,7 +684,7 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
       ]);
       streams.stdout.write(renderTwoColumnTable("DEFAULT CONFIGURATION", rows as Array<[string, string]>));
     }
-    return { code: 0 };
+    return { code: EXIT_POLICY.OK };
   }
 
   const payload: Record<string, unknown> = {
@@ -738,12 +753,11 @@ function runConfigShow(args: string[], runtime: CliRuntime): ExitResult {
       );
     }
   }
-  return { code: hasConfigErrors(effective) ? 2 : 0 };
+  return { code: hasConfigErrors(effective) ? EXIT_POLICY.ERROR : EXIT_POLICY.OK };
 }
 
-function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
+function runConfigInit(args: string[], context: CliExecutionContext): ExitResult {
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const doWrite = hasFlag(flags, "write");
   const force = hasFlag(flags, "force");
@@ -753,7 +767,7 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
   const effective = loadEffectiveConfig({ env });
   if (!effective.path.path) {
     streams.stderr.write("Unable to resolve config path. Set HOME, XDG_CONFIG_HOME, or OP_RESOLVER_CONFIG.\n");
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
 
   const hasExistingConfigDefaultVault =
@@ -765,7 +779,7 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
     streams.stderr.write(
       "defaultVault is required. Pass --default-vault <name>, or keep an existing config file with defaultVault.\n"
     );
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
 
   const minimalConfig = {
@@ -805,23 +819,23 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
   }
 
   if (!doWrite) {
-    return { code: 0 };
+    return { code: EXIT_POLICY.OK };
   }
 
   if (fileExists && !force) {
     streams.stderr.write("Config file already exists. Use --force to overwrite.\n");
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
 
   if (fileExists) {
     try {
       if (lstatSync(effective.path.path).isSymbolicLink()) {
         streams.stderr.write("Refusing to write config to a symbolic link path.\n");
-        return { code: 2 };
+        return { code: EXIT_POLICY.ERROR };
       }
     } catch {
       streams.stderr.write("Unable to stat existing config path.\n");
-      return { code: 2 };
+      return { code: EXIT_POLICY.ERROR };
     }
   }
 
@@ -834,7 +848,7 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
   });
   if (!writeResult.ok) {
     streams.stderr.write(`${writeResult.message}\n`);
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
   try {
     chmodSync(effective.path.path, 0o600);
@@ -850,152 +864,259 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
       ])
     );
   }
-  return { code: 0 };
+  return { code: EXIT_POLICY.OK };
 }
 
-function runOpenclawSnippet(args: string[], runtime: CliRuntime): ExitResult {
-  const streams = normalizeStreams(runtime);
+function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitResult {
+  const { streams, entryScriptPath } = context;
   const { flags } = parseFlags(args);
-  const asJson = hasFlag(flags, "json");
+  const providerAlias = getStringFlag(flags, "provider") ?? "onepassword";
+  const commandOverride = getStringFlag(flags, "command");
 
-  const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
   const commandHint =
-    path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
+    commandOverride ??
+    (path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
       ? invokedPath
-      : "/absolute/path/to/openclaw-1p-sdk-resolver";
+      : "/absolute/path/to/openclaw-1p-sdk-resolver");
 
-  const snippet = {
-    providers: [
-      {
-        name: "onepassword",
-        kind: "exec",
-        config: {
-          jsonOnly: true,
-          command: commandHint,
-          passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"],
-          trustedDirs: ["$HOME/.local/bin", "$HOME/bin"]
-        }
-      }
-    ]
-  };
+  const snippet = buildResolverProviderSnippet({ commandHint, providerAlias });
+  printJson(streams.stdout, snippet);
 
-  if (asJson) {
-    printJson(streams.stdout, snippet);
-  } else {
-    streams.stdout.write(
-      renderTwoColumnTable("OPENCLAW PROVIDER SNIPPET", [
-        ["Provider Name", "onepassword"],
-        ["Kind", "exec"],
-        ["jsonOnly", "true"],
-        ["Command", commandHint],
-        ["passEnv", "HOME, OP_SERVICE_ACCOUNT_TOKEN, OP_RESOLVER_CONFIG"],
-        ["trustedDirs", "$HOME/.local/bin, $HOME/bin"]
-      ])
-    );
-  }
-
-  return { code: 0 };
+  return { code: EXIT_POLICY.OK };
 }
 
-function runOpenclawAudit(args: string[], runtime: CliRuntime): ExitResult {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
-  const cwd = runtime.cwd ?? process.cwd();
-  const { flags, positionals } = parseFlags(args);
-  const asJson = hasFlag(flags, "json");
-  const auditMode = positionals[0] ?? "scan";
-  if (auditMode !== "scan" && auditMode !== "suggest") {
-    streams.stderr.write("Unknown audit mode. Use: scan | suggest\n");
-    return { code: 2 };
+async function analyzeOpenclawSetup(
+  args: string[],
+  context: CliExecutionContext,
+  runtime: CliRuntime
+): Promise<{
+  payload: {
+    status: "clean" | "findings" | "error" | "runtime-error";
+    checkMode: boolean;
+    path: ReturnType<typeof resolveOpenclawConfigPath>;
+    parseError?: string;
+    provider: ReturnType<typeof checkOpenclawProviderSetup>;
+    resolver: {
+      configPath?: string;
+      configSource: string;
+      tokenPresent: boolean;
+      sdkStatus: "skipped" | "ok" | "error";
+    };
+    issues: Array<{ code: string; message: string; path?: string }>;
+    actions: string[];
+  };
+  exit: ExitCode;
+}> {
+  const { streams, env } = context;
+  const { flags } = parseFlags(args);
+  const checkMode = hasFlag(flags, "check");
+  const explicitPath = getStringFlag(flags, "path");
+  const providerAlias = getStringFlag(flags, "provider");
+  const pathResolution = resolveOpenclawConfigPath({ env, explicitPath });
+  const issues: Array<{ code: string; message: string; path?: string }> = [];
+
+  let openclawText: string | undefined;
+  if (pathResolution.path && pathResolution.readable) {
+    openclawText = readFileSync(pathResolution.path, "utf8");
+  } else if (pathResolution.path && pathResolution.exists && !pathResolution.readable) {
+    issues.push({
+      code: "openclaw_config_unreadable",
+      message: "OpenClaw config path exists but is not readable.",
+      path: pathResolution.path
+    });
+  } else if (pathResolution.path && !pathResolution.exists) {
+    issues.push({
+      code: "openclaw_config_missing",
+      message: "OpenClaw config path does not exist.",
+      path: pathResolution.path
+    });
   }
 
-  const explicitPath = getStringFlag(flags, "path");
-  const repoRoot = getStringFlag(flags, "repo") ?? cwd;
-  const pathResolution = resolveOpenclawConfigPath({ env, explicitPath });
-  const openclawText =
-    pathResolution.path && pathResolution.readable ? readFileSync(pathResolution.path, "utf8") : undefined;
-  const references = openclawText ? collectOpenclawReferences(openclawText) : [];
   const parseResult = openclawText ? parseOpenclawConfigText(openclawText) : { parsed: undefined as unknown };
   const parseError = openclawText ? parseResult.parseError : undefined;
+  if (parseError) {
+    issues.push({
+      code: "openclaw_config_parse_error",
+      message: parseError,
+      path: pathResolution.path
+    });
+  }
 
-  const findings = auditMode === "scan" ? scanRepositoryForSecretCandidates({ rootDir: repoRoot }) : [];
-  const suggestions = suggestOpenclawProviderImprovements({ openclawText, references });
+  const provider = checkOpenclawProviderSetup({
+    parsedConfig: parseResult.parsed,
+    providerAlias
+  });
+  for (const finding of provider.findings) {
+    issues.push({
+      code: finding.code,
+      message: finding.message,
+      path: finding.path
+    });
+  }
+
+  const effective = loadEffectiveConfig({ env });
+  const tokenPresent = Boolean(env.OP_SERVICE_ACCOUNT_TOKEN?.trim());
+  let sdkStatus: "skipped" | "ok" | "error" = "skipped";
+  if (tokenPresent && !hasConfigErrors(effective)) {
+    try {
+      const createResolver = runtime.createResolver ?? createOnePasswordResolver;
+      await createResolver({
+        auth: env.OP_SERVICE_ACCOUNT_TOKEN?.trim() ?? "",
+        clientName: effective.config.onePasswordClientName,
+        clientVersion: effective.config.onePasswordClientVersion
+      });
+      sdkStatus = "ok";
+    } catch {
+      sdkStatus = "error";
+      issues.push({
+        code: "onepassword_sdk_init_failed",
+        message: "Unable to initialize 1Password SDK client."
+      });
+    }
+  } else if (!tokenPresent) {
+    issues.push({
+      code: "token_missing",
+      message: "OP_SERVICE_ACCOUNT_TOKEN is missing."
+    });
+  }
+
+  const actions = [...provider.suggestions];
+  if (!pathResolution.path || !pathResolution.exists) {
+    actions.push("Create an OpenClaw config file, then add the provider snippet output.");
+  }
+  actions.push("Use `openclaw-1p-sdk-resolver openclaw snippet` and paste it under OpenClaw secrets.providers.");
+  actions.push("Run `openclaw-1p-sdk-resolver openclaw check --check` after updating config.");
+
+  const status: "clean" | "findings" | "error" | "runtime-error" =
+    sdkStatus === "error"
+      ? "runtime-error"
+      : issues.some((issue) =>
+            issue.code === "openclaw_config_unreadable" || issue.code === "openclaw_config_parse_error"
+          )
+        ? "error"
+        : issues.length > 0
+          ? "findings"
+          : "clean";
+
+  const exit =
+    status === "runtime-error"
+      ? EXIT_POLICY.RUNTIME
+      : status === "error"
+        ? EXIT_POLICY.ERROR
+        : status === "findings" && checkMode
+          ? EXIT_POLICY.FINDINGS
+          : EXIT_POLICY.OK;
+
+  return {
+    payload: {
+      status,
+      checkMode,
+      path: pathResolution,
+      parseError,
+      provider,
+      resolver: {
+        configPath: effective.path.path,
+        configSource: effective.path.source,
+        tokenPresent,
+        sdkStatus
+      },
+      issues,
+      actions
+    },
+    exit
+  };
+}
+
+async function runOpenclawCheck(args: string[], context: CliExecutionContext, runtime: CliRuntime): Promise<ExitResult> {
+  const { streams } = context;
+  const { flags } = parseFlags(args);
+  const asJson = hasFlag(flags, "json");
+  const analysis = await analyzeOpenclawSetup(args, context, runtime);
+
+  if (asJson) {
+    printJson(streams.stdout, analysis.payload);
+  } else {
+    streams.stdout.write("OPENCLAW CHECK\n\n");
+    streams.stdout.write("SUMMARY\n");
+    streams.stdout.write(`- status: ${analysis.payload.status}\n`);
+    streams.stdout.write(`- config path: ${analysis.payload.path.path ?? "(unresolved)"}\n`);
+    streams.stdout.write(`- provider found: ${analysis.payload.provider.providerFound ? "yes" : "no"}\n`);
+    streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${analysis.payload.resolver.tokenPresent ? "yes" : "no"}\n`);
+    streams.stdout.write(`- 1Password SDK: ${analysis.payload.resolver.sdkStatus}\n`);
+    streams.stdout.write("\nFINDINGS\n");
+    if (analysis.payload.issues.length === 0) {
+      streams.stdout.write("- none\n");
+    } else {
+      for (const issue of analysis.payload.issues) {
+        streams.stdout.write(`- ${issue.code}: ${issue.message}\n`);
+      }
+    }
+    streams.stdout.write("\nNEXT ACTIONS\n");
+    if (analysis.payload.actions.length === 0) {
+      streams.stdout.write("- none\n");
+    } else {
+      for (const action of analysis.payload.actions.slice(0, 5)) {
+        streams.stdout.write(`- ${action}\n`);
+      }
+    }
+  }
+
+  return { code: analysis.exit };
+}
+
+async function runOpenclawDiagnose(
+  args: string[],
+  context: CliExecutionContext,
+  runtime: CliRuntime
+): Promise<ExitResult> {
+  const { streams, env } = context;
+  const { flags } = parseFlags(args);
+  const asJson = hasFlag(flags, "json");
+  const analysis = await analyzeOpenclawSetup(args, context, runtime);
+  const effective = loadEffectiveConfig({ env });
 
   const payload = {
-    mode: auditMode,
-    configPath: pathResolution,
-    parseError,
-    summary: {
-      referencesFound: references.length,
-      candidateSecrets: findings.filter((finding) => finding.type === "candidate_for_1password").length,
-      riskyLiterals: findings.filter((finding) => finding.type === "risky_literal").length
-    },
-    findings,
-    suggestions
+    ...analysis.payload,
+    resolverConfig: toSerializableConfig(effective.config),
+    resolverProvenance: toSerializableProvenance(effective),
+    resolverIssues: effective.issues
   };
 
   if (asJson) {
     printJson(streams.stdout, payload);
   } else {
-    streams.stdout.write("OPENCLAW AUDIT\n\n");
-    streams.stdout.write(
-      renderTwoColumnTable("OPENCLAW CONFIGURATION", [
-        ["Path", pathResolution.path ?? "(unresolved)"],
-        ["Source", pathResolution.source],
-        ["Exists", pathResolution.exists ? "yes" : "no"],
-        ["Readable", pathResolution.readable ? "yes" : "no"],
-        ["Reason", pathResolution.reason],
-        ["Parse", parseError ? "invalid-json" : openclawText ? "ok" : "not-loaded"]
-      ])
-    );
-    streams.stdout.write(
-      renderTwoColumnTable("SUMMARY", [
-        ["OpenClaw refs found", String(references.length)],
-        ["Candidate secrets", String(payload.summary.candidateSecrets)],
-        ["Risky literals", String(payload.summary.riskyLiterals)]
-      ])
-    );
-    if (auditMode === "scan") {
-      streams.stdout.write("FINDINGS\n");
-      const rows =
-        findings.length > 0
-          ? findings.map((finding) => [finding.type, finding.file, String(finding.line), finding.key, finding.fingerprint])
-          : [["-", "-", "-", "-", "No findings."]];
-      streams.stdout.write(
-        `${renderAsciiTable(
-          [
-            { header: "Type", maxWidth: 24 },
-            { header: "File", maxWidth: 68 },
-            { header: "Line", maxWidth: 8 },
-            { header: "Key", maxWidth: 28 },
-            { header: "Fingerprint", maxWidth: 28 }
-          ],
-          rows
-        )}\n\n`
-      );
+    streams.stdout.write("OPENCLAW DIAGNOSE\n\n");
+    streams.stdout.write("SUMMARY\n");
+    streams.stdout.write(`- status: ${payload.status}\n`);
+    streams.stdout.write(`- provider found: ${payload.provider.providerFound ? "yes" : "no"}\n`);
+    streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.resolver.tokenPresent ? "yes" : "no"}\n`);
+    streams.stdout.write(`- 1Password SDK: ${payload.resolver.sdkStatus}\n\n`);
+    streams.stdout.write("OPENCLAW CONFIG PATH\n");
+    streams.stdout.write(`- path: ${payload.path.path ?? "(unresolved)"}\n`);
+    streams.stdout.write(`- source: ${payload.path.source}\n`);
+    streams.stdout.write(`- reason: ${payload.path.reason}\n`);
+    streams.stdout.write(`- exists/readable: ${payload.path.exists ? "yes" : "no"}/${payload.path.readable ? "yes" : "no"}\n\n`);
+    streams.stdout.write("PROVIDER FINDINGS\n");
+    if (payload.provider.findings.length === 0) {
+      streams.stdout.write("- none\n");
+    } else {
+      for (const finding of payload.provider.findings) {
+        streams.stdout.write(`- ${finding.code} at ${finding.path}: ${finding.message}\n`);
+      }
     }
-    streams.stdout.write("SUGGESTIONS\n");
-    const suggestionRows = suggestions.length > 0 ? suggestions.map((suggestion, index) => [String(index + 1), suggestion]) : [["1", "No suggestions."]];
-    streams.stdout.write(
-      `${renderAsciiTable(
-        [
-          { header: "#", maxWidth: 4 },
-          { header: "Suggestion", maxWidth: 120 }
-        ],
-        suggestionRows
-      )}\n`
-    );
+    streams.stdout.write("\nRESOLVER CONFIG\n");
+    streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
+    streams.stdout.write("\nRESOLVER PROVENANCE\n");
+    streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
+    streams.stdout.write("\nRESOLVER ISSUES\n");
+    streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
   }
-
-  if (pathResolution.exists && !pathResolution.readable) {
-    return { code: 2 };
-  }
-  return { code: 0 };
+  return { code: analysis.exit };
 }
 
-async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResult> {
-  const streams = normalizeStreams(runtime);
-  const env = runtime.env ?? process.env;
+async function runResolve(args: string[], context: CliExecutionContext, runtime: CliRuntime): Promise<ExitResult> {
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const idsFromFlag = flags.get("id") ?? [];
   const fromStdin = hasFlag(flags, "stdin");
@@ -1007,12 +1128,12 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
   const effective = loadEffectiveConfig({ env });
   if (hasConfigErrors(effective)) {
     streams.stderr.write("Configuration is invalid. Run 'doctor' for details.\n");
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
 
   if (!env.OP_SERVICE_ACCOUNT_TOKEN?.trim()) {
     streams.stderr.write("OP_SERVICE_ACCOUNT_TOKEN is required for resolve.\n");
-    return { code: 2 };
+    return { code: EXIT_POLICY.ERROR };
   }
 
   if (reveal && !yes) {
@@ -1022,7 +1143,7 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
 
     if (!confirmed) {
       streams.stderr.write("Reveal was not confirmed. Re-run with --yes to force non-interactive reveal.\n");
-      return { code: 2 };
+      return { code: EXIT_POLICY.ERROR };
     }
   }
 
@@ -1032,7 +1153,7 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
 
   if (sanitizedIds.length === 0) {
     streams.stderr.write("No valid ids to resolve.\n");
-    return { code: 1 };
+    return { code: EXIT_POLICY.FINDINGS };
   }
 
   const refToId = new Map<string, string>();
@@ -1070,7 +1191,7 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
     const rows = buildRowsForNoRequestedRefs(sanitizedIds, unresolvedReasons);
     printResolveResults(streams, { rows, debug, reveal, asJson });
 
-    return { code: 1 };
+    return { code: EXIT_POLICY.FINDINGS };
   }
 
   try {
@@ -1099,73 +1220,77 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
     printResolveResults(streams, { rows, debug, reveal, asJson });
 
     return {
-      code: rows.every((row) => row.status === "resolved") ? 0 : 1
+      code: rows.every((row) => row.status === "resolved") ? EXIT_POLICY.OK : EXIT_POLICY.FINDINGS
     };
   } catch {
     streams.stderr.write("Resolver runtime failed.\n");
-    return { code: 3 };
+    return { code: EXIT_POLICY.RUNTIME };
   }
 }
 
 export async function runCli(argv: string[], runtime: CliRuntime): Promise<number> {
-  const streams = normalizeStreams(runtime);
+  const context = normalizeExecutionContext(runtime);
+  const { streams } = context;
   const command = argv[0];
 
   if (!command) {
     await runtime.runResolver({
-      env: runtime.env,
-      stdin: streams.stdin,
-      stdout: streams.stdout,
+      env: context.env,
+      stdin: context.streams.stdin,
+      stdout: context.streams.stdout,
       resolver: runtime.resolver
     });
-    return 0;
+    return EXIT_POLICY.OK;
   }
 
   if (command === "help" || command === "--help" || command === "-h") {
     printUsage(streams.stdout);
-    return 0;
+    return EXIT_POLICY.OK;
   }
 
   if (command === "doctor") {
-    const result = await runDoctor(argv.slice(1), runtime);
+    const result = await runDoctor(argv.slice(1), context, runtime);
     return result.code;
   }
 
   if (command === "config") {
     const subcommand = argv[1];
     if (subcommand === "path") {
-      return runConfigPath(argv.slice(2), runtime).code;
+      return runConfigPath(argv.slice(2), context).code;
     }
     if (subcommand === "show") {
-      return runConfigShow(argv.slice(2), runtime).code;
+      return runConfigShow(argv.slice(2), context).code;
     }
     if (subcommand === "init") {
-      return runConfigInit(argv.slice(2), runtime).code;
+      return runConfigInit(argv.slice(2), context).code;
     }
     streams.stderr.write("Unknown config subcommand. Use: path | show | init\n");
-    return 2;
+    return EXIT_POLICY.ERROR;
   }
 
   if (command === "openclaw") {
     const subcommand = argv[1];
     if (subcommand === "snippet") {
-      return runOpenclawSnippet(argv.slice(2), runtime).code;
+      return runOpenclawSnippet(argv.slice(2), context).code;
     }
-    if (subcommand === "audit") {
-      return runOpenclawAudit(argv.slice(2), runtime).code;
+    if (subcommand === "check") {
+      return (await runOpenclawCheck(argv.slice(2), context, runtime)).code;
     }
-    streams.stderr.write("Unknown openclaw subcommand. Use: snippet | audit\n");
-    return 2;
+    if (subcommand === "diagnose") {
+      return (await runOpenclawDiagnose(argv.slice(2), context, runtime)).code;
+    }
+    streams.stderr.write("Unknown openclaw subcommand. Use: check | snippet | diagnose\n");
+    return EXIT_POLICY.ERROR;
   }
 
   if (command === "resolve") {
-    const result = await runResolve(argv.slice(1), runtime);
+    const result = await runResolve(argv.slice(1), context, runtime);
     return result.code;
   }
 
   streams.stderr.write(`Unknown command: ${command}\n`);
   printUsage(streams.stderr);
-  return 2;
+  return EXIT_POLICY.ERROR;
 }
 
 export async function ensureRevealAllowed(options: {

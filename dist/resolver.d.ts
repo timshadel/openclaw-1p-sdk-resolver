@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { runCli as runCommandCli } from "./cli.js";
 import { type SecretResolver } from "./onepassword.js";
 /**
  * Resolver orchestration entrypoint.
@@ -13,6 +14,13 @@ export type ResolverRuntime = {
     env?: NodeJS.ProcessEnv;
     resolver?: SecretResolver;
 };
+export type ResolverExecutionContext = {
+    stdin: NodeJS.ReadableStream;
+    stdout: NodeJS.WritableStream;
+    env: NodeJS.ProcessEnv;
+};
+export type ResolverDefaultContext = ResolverExecutionContext;
+export declare function normalizeResolverExecutionContext(runtime: ResolverRuntime, defaults: ResolverDefaultContext): ResolverExecutionContext;
 export declare function buildRequestedRefs(options: {
     ids: string[];
     defaultVault: string;
@@ -27,13 +35,25 @@ export declare function readStdinWithLimit(stream: NodeJS.ReadableStream, maxByt
     ok: boolean;
     buffer: Buffer;
 }>;
+export declare function executeResolver(context: ResolverExecutionContext, runtime?: Pick<ResolverRuntime, "resolver">): Promise<void>;
 export declare function runResolver(runtime?: ResolverRuntime): Promise<void>;
+export type CliProcessInvocation = {
+    args: string[];
+    env: NodeJS.ProcessEnv;
+    processLike: {
+        exitCode?: number | string;
+    };
+};
+export declare function executeCliProcess(invocation: CliProcessInvocation, options?: {
+    runCliCommand?: typeof runCommandCli;
+}): Promise<void>;
+export declare function shouldRunMainModule(moduleUrl: string, entryScriptPath?: string): boolean;
 export declare function runCli(argv?: string[]): Promise<void>;
 export declare function runMain(options?: {
     run?: (argv?: string[]) => Promise<void>;
     argv?: string[];
     processLike?: {
-        exitCode?: number;
+        exitCode?: number | string;
     };
 }): Promise<void>;
 //# sourceMappingURL=resolver.d.ts.map

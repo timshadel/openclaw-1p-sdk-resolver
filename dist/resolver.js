@@ -1,9 +1,17 @@
 import { Buffer } from "node:buffer";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { runCli as runCommandCli } from "./cli.js";
+import { EXIT_POLICY } from "./exit-policy.js";
 import { formatResponse, loadConfig, parseRequestBuffer } from "./protocol.js";
 import { createOnePasswordResolver, isValidSecretReference } from "./onepassword.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
+export function normalizeResolverExecutionContext(runtime, defaults) {
+    return {
+        env: runtime.env ?? defaults.env,
+        stdin: runtime.stdin ?? defaults.stdin,
+        stdout: runtime.stdout ?? defaults.stdout
+    };
+}
 export function buildRequestedRefs(options) {
     const refToId = new Map();
     const refs = [];
@@ -110,31 +118,28 @@ function emptyResponse(protocolVersion) {
         values: {}
     };
 }
-export async function runResolver(runtime = {}) {
-    const env = runtime.env ?? process.env;
-    const stdin = runtime.stdin ?? processStdin;
-    const stdout = runtime.stdout ?? processStdout;
-    const config = loadConfig(env);
-    const token = env.OP_SERVICE_ACCOUNT_TOKEN?.trim();
+export async function executeResolver(context, runtime = {}) {
+    const config = loadConfig(context.env);
+    const token = context.env.OP_SERVICE_ACCOUNT_TOKEN?.trim();
     const defaultProtocolVersion = 1;
-    const stdinResult = await readStdinWithLimit(stdin, config.maxStdinBytes, config.stdinTimeoutMs);
+    const stdinResult = await readStdinWithLimit(context.stdin, config.maxStdinBytes, config.stdinTimeoutMs);
     if (!stdinResult.ok) {
-        await writeResponse(stdout, emptyResponse(defaultProtocolVersion));
+        await writeResponse(context.stdout, emptyResponse(defaultProtocolVersion));
         return;
     }
     const request = parseRequestBuffer(stdinResult.buffer, config.maxStdinBytes);
     if (!request) {
-        await writeResponse(stdout, emptyResponse(defaultProtocolVersion));
+        await writeResponse(context.stdout, emptyResponse(defaultProtocolVersion));
         return;
     }
     const protocolVersion = request.protocolVersion;
     if (!token) {
-        await writeResponse(stdout, emptyResponse(protocolVersion));
+        await writeResponse(context.stdout, emptyResponse(protocolVersion));
         return;
     }
     const ids = sanitizeIds(request.ids, config.maxIds, config.allowedIdRegex);
     if (ids.length === 0) {
-        await writeResponse(stdout, emptyResponse(protocolVersion));
+        await writeResponse(context.stdout, emptyResponse(protocolVersion));
         return;
     }
     const { refs, refToId } = buildRequestedRefs({
@@ -144,7 +149,7 @@ export async function runResolver(runtime = {}) {
         vaultWhitelist: config.vaultWhitelist
     });
     if (refs.length === 0) {
-        await writeResponse(stdout, emptyResponse(protocolVersion));
+        await writeResponse(context.stdout, emptyResponse(protocolVersion));
         return;
     }
     try {
@@ -156,22 +161,44 @@ export async function runResolver(runtime = {}) {
             }));
         const resolved = await withTimeout(resolver.resolveRefs(refs, config.timeoutMs, config.concurrency), config.timeoutMs);
         const values = mapResolvedValuesToIds(resolved, refToId);
-        await writeResponse(stdout, {
+        await writeResponse(context.stdout, {
             protocolVersion,
             values
         });
     }
     catch {
         // Any runtime/SDK failure is treated as unresolved to avoid data leakage.
-        await writeResponse(stdout, emptyResponse(protocolVersion));
+        await writeResponse(context.stdout, emptyResponse(protocolVersion));
     }
 }
-export async function runCli(argv = process.argv.slice(2)) {
-    const exitCode = await runCommandCli(argv, {
+export async function runResolver(runtime = {}) {
+    const context = normalizeResolverExecutionContext(runtime, {
         env: process.env,
+        stdin: processStdin,
+        stdout: processStdout
+    });
+    await executeResolver(context, { resolver: runtime.resolver });
+}
+export async function executeCliProcess(invocation, options = {}) {
+    const runCliCommand = options.runCliCommand ?? runCommandCli;
+    const exitCode = await runCliCommand(invocation.args, {
+        env: invocation.env,
         runResolver
     });
-    process.exitCode = exitCode;
+    invocation.processLike.exitCode = exitCode;
+}
+export function shouldRunMainModule(moduleUrl, entryScriptPath) {
+    if (!entryScriptPath) {
+        return false;
+    }
+    return moduleUrl === `file://${entryScriptPath}`;
+}
+export async function runCli(argv = process.argv.slice(2)) {
+    await executeCliProcess({
+        args: argv,
+        env: process.env,
+        processLike: process
+    });
 }
 export async function runMain(options = {}) {
     const run = options.run ?? runCli;
@@ -182,10 +209,10 @@ export async function runMain(options = {}) {
         // runCli is responsible for setting successful/expected exit codes.
     }
     catch {
-        processLike.exitCode = 3;
+        processLike.exitCode = EXIT_POLICY.RUNTIME;
     }
 }
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (shouldRunMainModule(import.meta.url, process.argv[1])) {
     void runMain();
 }
 //# sourceMappingURL=resolver.js.map

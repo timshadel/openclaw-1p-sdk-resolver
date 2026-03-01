@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { runCli as runCommandCli } from "./cli.js";
+import { EXIT_POLICY } from "./exit-policy.js";
 import { formatResponse, loadConfig, parseRequestBuffer, type ResponsePayload } from "./protocol.js";
 import { createOnePasswordResolver, isValidSecretReference, type SecretResolver } from "./onepassword.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
@@ -18,6 +19,25 @@ export type ResolverRuntime = {
   env?: NodeJS.ProcessEnv;
   resolver?: SecretResolver;
 };
+
+export type ResolverExecutionContext = {
+  stdin: NodeJS.ReadableStream;
+  stdout: NodeJS.WritableStream;
+  env: NodeJS.ProcessEnv;
+};
+
+export type ResolverDefaultContext = ResolverExecutionContext;
+
+export function normalizeResolverExecutionContext(
+  runtime: ResolverRuntime,
+  defaults: ResolverDefaultContext
+): ResolverExecutionContext {
+  return {
+    env: runtime.env ?? defaults.env,
+    stdin: runtime.stdin ?? defaults.stdin,
+    stdout: runtime.stdout ?? defaults.stdout
+  };
+}
 
 export function buildRequestedRefs(options: {
   ids: string[];
@@ -153,36 +173,36 @@ function emptyResponse(protocolVersion: number): ResponsePayload {
   };
 }
 
-export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> {
-  const env = runtime.env ?? process.env;
-  const stdin = runtime.stdin ?? processStdin;
-  const stdout = runtime.stdout ?? processStdout;
-  const config = loadConfig(env);
+export async function executeResolver(
+  context: ResolverExecutionContext,
+  runtime: Pick<ResolverRuntime, "resolver"> = {}
+): Promise<void> {
+  const config = loadConfig(context.env);
 
-  const token = env.OP_SERVICE_ACCOUNT_TOKEN?.trim();
+  const token = context.env.OP_SERVICE_ACCOUNT_TOKEN?.trim();
   const defaultProtocolVersion = 1;
 
-  const stdinResult = await readStdinWithLimit(stdin, config.maxStdinBytes, config.stdinTimeoutMs);
+  const stdinResult = await readStdinWithLimit(context.stdin, config.maxStdinBytes, config.stdinTimeoutMs);
   if (!stdinResult.ok) {
-    await writeResponse(stdout, emptyResponse(defaultProtocolVersion));
+    await writeResponse(context.stdout, emptyResponse(defaultProtocolVersion));
     return;
   }
 
   const request = parseRequestBuffer(stdinResult.buffer, config.maxStdinBytes);
   if (!request) {
-    await writeResponse(stdout, emptyResponse(defaultProtocolVersion));
+    await writeResponse(context.stdout, emptyResponse(defaultProtocolVersion));
     return;
   }
 
   const protocolVersion = request.protocolVersion;
   if (!token) {
-    await writeResponse(stdout, emptyResponse(protocolVersion));
+    await writeResponse(context.stdout, emptyResponse(protocolVersion));
     return;
   }
 
   const ids = sanitizeIds(request.ids, config.maxIds, config.allowedIdRegex);
   if (ids.length === 0) {
-    await writeResponse(stdout, emptyResponse(protocolVersion));
+    await writeResponse(context.stdout, emptyResponse(protocolVersion));
     return;
   }
 
@@ -194,7 +214,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
   });
 
   if (refs.length === 0) {
-    await writeResponse(stdout, emptyResponse(protocolVersion));
+    await writeResponse(context.stdout, emptyResponse(protocolVersion));
     return;
   }
 
@@ -214,28 +234,64 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
 
     const values = mapResolvedValuesToIds(resolved, refToId);
 
-    await writeResponse(stdout, {
+    await writeResponse(context.stdout, {
       protocolVersion,
       values
     });
   } catch {
     // Any runtime/SDK failure is treated as unresolved to avoid data leakage.
-    await writeResponse(stdout, emptyResponse(protocolVersion));
+    await writeResponse(context.stdout, emptyResponse(protocolVersion));
   }
 }
 
-export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const exitCode = await runCommandCli(argv, {
+export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> {
+  const context = normalizeResolverExecutionContext(runtime, {
     env: process.env,
+    stdin: processStdin,
+    stdout: processStdout
+  });
+  await executeResolver(context, { resolver: runtime.resolver });
+}
+
+export type CliProcessInvocation = {
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  processLike: { exitCode?: number | string };
+};
+
+export async function executeCliProcess(
+  invocation: CliProcessInvocation,
+  options: {
+    runCliCommand?: typeof runCommandCli;
+  } = {}
+): Promise<void> {
+  const runCliCommand = options.runCliCommand ?? runCommandCli;
+  const exitCode = await runCliCommand(invocation.args, {
+    env: invocation.env,
     runResolver
   });
-  process.exitCode = exitCode;
+  invocation.processLike.exitCode = exitCode;
+}
+
+export function shouldRunMainModule(moduleUrl: string, entryScriptPath?: string): boolean {
+  if (!entryScriptPath) {
+    return false;
+  }
+  return moduleUrl === `file://${entryScriptPath}`;
+}
+
+export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+  await executeCliProcess({
+    args: argv,
+    env: process.env,
+    processLike: process
+  });
 }
 
 export async function runMain(options: {
   run?: (argv?: string[]) => Promise<void>;
   argv?: string[];
-  processLike?: { exitCode?: number };
+  processLike?: { exitCode?: number | string };
 } = {}): Promise<void> {
   const run = options.run ?? runCli;
   const argv = options.argv ?? process.argv.slice(2);
@@ -245,10 +301,10 @@ export async function runMain(options: {
     await run(argv);
     // runCli is responsible for setting successful/expected exit codes.
   } catch {
-    processLike.exitCode = 3;
+    processLike.exitCode = EXIT_POLICY.RUNTIME;
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (shouldRunMainModule(import.meta.url, process.argv[1])) {
   void runMain();
 }

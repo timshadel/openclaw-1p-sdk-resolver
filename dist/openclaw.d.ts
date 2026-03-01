@@ -5,28 +5,43 @@ export type OpenclawConfigPathResolution = {
     exists: boolean;
     readable: boolean;
 };
-export type AuditFinding = {
-    type: "already_1password" | "candidate_for_1password" | "risky_literal";
-    file: string;
-    line: number;
-    key: string;
-    fingerprint: string;
+export type OpenclawProviderFinding = {
+    code: "provider_missing" | "provider_kind_mismatch" | "provider_json_only_missing" | "provider_command_missing" | "provider_passenv_missing";
+    message: string;
+    path: string;
+    expected?: unknown;
+    actual?: unknown;
+};
+export type OpenclawProviderCheckResult = {
+    providerFound: boolean;
+    findings: OpenclawProviderFinding[];
+    suggestions: string[];
 };
 export declare function resolveOpenclawConfigPath(options: {
     env: NodeJS.ProcessEnv;
     explicitPath?: string;
 }): OpenclawConfigPathResolution;
-export declare function collectOpenclawReferences(text: string): string[];
 export declare function parseOpenclawConfigText(text: string): {
     parsed?: unknown;
     parseError?: string;
 };
-export declare function scanRepositoryForSecretCandidates(options: {
-    rootDir: string;
-    maxFiles?: number;
-}): AuditFinding[];
-export declare function suggestOpenclawProviderImprovements(options: {
-    openclawText?: string;
-    references: string[];
-}): string[];
+export declare function buildResolverProviderSnippet(options: {
+    commandHint: string;
+    providerAlias?: string;
+}): {
+    providers: Array<{
+        name: string;
+        kind: "exec";
+        config: {
+            jsonOnly: true;
+            command: string;
+            passEnv: string[];
+            trustedDirs: string[];
+        };
+    }>;
+};
+export declare function checkOpenclawProviderSetup(options: {
+    parsedConfig: unknown;
+    providerAlias?: string;
+}): OpenclawProviderCheckResult;
 //# sourceMappingURL=openclaw.d.ts.map

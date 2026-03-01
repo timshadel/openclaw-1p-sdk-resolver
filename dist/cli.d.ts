@@ -8,6 +8,7 @@ type CliStreams = {
 type CliRuntime = {
     env?: NodeJS.ProcessEnv;
     cwd?: string;
+    entryScriptPath?: string;
     streams?: Partial<CliStreams>;
     resolver?: SecretResolver;
     createResolver?: typeof createOnePasswordResolver;

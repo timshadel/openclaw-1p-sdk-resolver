@@ -6,11 +6,15 @@ import { describe, expect, it, vi } from "vitest";
 import type { SecretResolver } from "../src/onepassword.js";
 import {
   buildRequestedRefs,
+  executeCliProcess,
+  executeResolver,
   mapResolvedValuesToIds,
+  normalizeResolverExecutionContext,
   readStdinWithLimit,
   runCli,
   runMain,
-  runResolver
+  runResolver,
+  shouldRunMainModule
 } from "../src/resolver.js";
 import * as onepasswordModule from "../src/onepassword.js";
 
@@ -722,5 +726,78 @@ describe("resolver", () => {
 
     expect(process.exitCode).toBe(0);
     process.exitCode = previousExitCode;
+  });
+
+  it("normalizes resolver execution context with explicit and fallback values", () => {
+    const defaultIn = new PassThrough();
+    const defaultOut = new CaptureWritable();
+    const explicitIn = new PassThrough();
+    const explicitOut = new CaptureWritable();
+    const defaults = {
+      env: { DEFAULT_KEY: "default" } as NodeJS.ProcessEnv,
+      stdin: defaultIn as NodeJS.ReadableStream,
+      stdout: defaultOut as NodeJS.WritableStream
+    };
+
+    const explicit = normalizeResolverExecutionContext(
+      {
+        env: { EXPLICIT_KEY: "explicit" },
+        stdin: explicitIn,
+        stdout: explicitOut
+      },
+      defaults
+    );
+    expect(explicit.env.EXPLICIT_KEY).toBe("explicit");
+    expect(explicit.stdin).toBe(explicitIn);
+    expect(explicit.stdout).toBe(explicitOut);
+
+    const fallback = normalizeResolverExecutionContext({}, defaults);
+    expect(fallback.env.DEFAULT_KEY).toBe("default");
+    expect(fallback.stdin).toBe(defaultIn);
+    expect(fallback.stdout).toBe(defaultOut);
+  });
+
+  it("executeResolver runs with injected execution context", async () => {
+    const out = new CaptureWritable();
+    const context = {
+      stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids: ["ServiceA/token"] })),
+      stdout: out,
+      env: {
+        ...createConfigEnv({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      }
+    };
+    await executeResolver(context, {
+      resolver: {
+        resolveRefs: async (refs: string[]) => new Map([[refs[0], "secret-via-execute"]])
+      }
+    });
+    expect(parseOutput(out.text)).toEqual({
+      protocolVersion: 1,
+      values: {
+        "ServiceA/token": "secret-via-execute"
+      }
+    });
+  });
+
+  it("executeCliProcess assigns exit code to injected process-like object", async () => {
+    const processLike: { exitCode?: number } = {};
+    await executeCliProcess(
+      {
+        args: ["doctor", "--json"],
+        env: {},
+        processLike
+      },
+      {
+        runCliCommand: async () => 2
+      }
+    );
+    expect(processLike.exitCode).toBe(2);
+  });
+
+  it("shouldRunMainModule compares module URL and entry script path safely", () => {
+    expect(shouldRunMainModule("file:///tmp/app.js", "/tmp/app.js")).toBe(true);
+    expect(shouldRunMainModule("file:///tmp/app.js", "/tmp/other.js")).toBe(false);
+    expect(shouldRunMainModule("file:///tmp/app.js", undefined)).toBe(false);
   });
 });

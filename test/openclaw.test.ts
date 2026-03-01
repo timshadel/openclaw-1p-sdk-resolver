@@ -1,16 +1,37 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  collectOpenclawReferences,
+  buildResolverProviderSnippet,
+  checkOpenclawProviderSetup,
   parseOpenclawConfigText,
-  resolveOpenclawConfigPath,
-  scanRepositoryForSecretCandidates,
-  suggestOpenclawProviderImprovements
+  resolveOpenclawConfigPath
 } from "../src/openclaw.js";
 
 describe("openclaw helpers", () => {
+  it("returns unresolved source when HOME and homedir are unavailable", async () => {
+    vi.resetModules();
+    vi.doMock("node:os", () => ({
+      homedir: () => ""
+    }));
+
+    const mocked = await import("../src/openclaw.js");
+    const resolution = mocked.resolveOpenclawConfigPath({
+      env: {
+        HOME: "",
+        OPENCLAW_CONFIG_PATH: "",
+        OPENCLAW_STATE_DIR: "",
+        OPENCLAW_HOME: ""
+      }
+    });
+    expect(resolution.source).toBe("unresolved");
+    expect(resolution.path).toBeUndefined();
+
+    vi.doUnmock("node:os");
+    vi.resetModules();
+  });
+
   it("prefers explicit path flag over env and handles unresolved env state", () => {
     const root = mkdtempSync(path.join(tmpdir(), "openclaw-explicit-"));
     const explicitPath = path.join(root, "cli-path.json");
@@ -78,67 +99,129 @@ describe("openclaw helpers", () => {
     expect(r4.source).toBe("HOME");
   });
 
-  it("collects op refs and parses json-with-comments", () => {
+  it("parses json-with-comments and returns error for malformed config", () => {
     const text = `
       {
         // comment
-        "secrets": ["op://Vault/Item/field", "op://Vault/Other/secret",],
+        "providers": [
+          { "name": "onepassword", "kind": "exec", "config": { "jsonOnly": true } },
+        ],
       }
     `;
-    const refs = collectOpenclawReferences(text);
-    expect(refs).toContain("op://Vault/Item/field");
-    expect(refs).toContain("op://Vault/Other/secret");
     const parsed = parseOpenclawConfigText(text);
     expect(parsed.parsed).toBeDefined();
+
+    const malformed = parseOpenclawConfigText("{ this is invalid ");
+    expect(malformed.parsed).toBeUndefined();
+    expect(malformed.parseError).toBeTruthy();
   });
 
-  it("returns parse error for invalid openclaw config", () => {
-    const parsed = parseOpenclawConfigText("{ this is invalid ");
-    expect(parsed.parsed).toBeUndefined();
-    expect(parsed.parseError).toBeTruthy();
-  });
-
-  it("scans repository for candidate secret literals without exposing values", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "openclaw-scan-"));
-    writeFileSync(
-      path.join(root, ".env"),
-      "API_TOKEN=supersecretvalue123456\nONEPASSWORD_REF=op://MainVault/Item/field\nSLACK=xoxb-1234567890123456789012345\n",
-      "utf8"
-    );
-    const findings = scanRepositoryForSecretCandidates({ rootDir: root });
-    expect(findings.some((finding) => finding.type === "candidate_for_1password")).toBe(true);
-    expect(findings.some((finding) => finding.type === "already_1password")).toBe(true);
-    expect(findings.some((finding) => finding.type === "risky_literal")).toBe(true);
-    expect(findings[0].fingerprint.includes("sha256=")).toBe(true);
-    expect(findings[0].fingerprint.includes("supersecretvalue123456")).toBe(false);
-  });
-
-  it("scanRepository respects maxFiles and ignores placeholder-like values", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "openclaw-maxfiles-"));
-    writeFileSync(path.join(root, "a.env"), "API_TOKEN=${PLACEHOLDER}\n", "utf8");
-    writeFileSync(path.join(root, "b.env"), "API_TOKEN=real-secret-value-123\n", "utf8");
-    const findingsLimited = scanRepositoryForSecretCandidates({ rootDir: root, maxFiles: 1 });
-    expect(findingsLimited.length).toBe(0);
-    const findingsAll = scanRepositoryForSecretCandidates({ rootDir: root, maxFiles: 10 });
-    expect(findingsAll.some((finding) => finding.key === "API_TOKEN")).toBe(true);
-  });
-
-  it("suggests provider improvements based on config text and refs", () => {
-    const suggestions = suggestOpenclawProviderImprovements({
-      openclawText: '{"providers":[]}',
-      references: []
+  it("builds provider snippet with required fields", () => {
+    const snippet = buildResolverProviderSnippet({
+      commandHint: "/abs/path/openclaw-1p-sdk-resolver",
+      providerAlias: "onepassword"
     });
-    expect(suggestions.some((line) => line.includes("exec provider"))).toBe(true);
-    expect(suggestions.some((line) => line.includes("jsonOnly"))).toBe(true);
+    expect(snippet.providers).toHaveLength(1);
+    expect(snippet.providers[0].name).toBe("onepassword");
+    expect(snippet.providers[0].kind).toBe("exec");
+    expect(snippet.providers[0].config.jsonOnly).toBe(true);
+    expect(snippet.providers[0].config.passEnv).toEqual([
+      "HOME",
+      "OP_SERVICE_ACCOUNT_TOKEN",
+      "OP_RESOLVER_CONFIG"
+    ]);
   });
 
-  it("returns fewer suggestions when provider looks complete", () => {
-    const suggestions = suggestOpenclawProviderImprovements({
-      openclawText:
-        '{"providers":[{"kind":"exec","config":{"command":"openclaw-1p-sdk-resolver","jsonOnly": true,"passEnv":["OP_SERVICE_ACCOUNT_TOKEN","OP_RESOLVER_CONFIG"]}}]}',
-      references: ["op://MainVault/Item/field"]
+  it("uses default provider alias when omitted or blank", () => {
+    const omitted = buildResolverProviderSnippet({
+      commandHint: "/abs/path/openclaw-1p-sdk-resolver"
     });
-    expect(suggestions.some((line) => line.includes("No op:// references"))).toBe(false);
-    expect(suggestions.some((line) => line.includes("jsonOnly"))).toBe(false);
+    expect(omitted.providers[0].name).toBe("onepassword");
+
+    const blank = buildResolverProviderSnippet({
+      commandHint: "/abs/path/openclaw-1p-sdk-resolver",
+      providerAlias: "   "
+    });
+    expect(blank.providers[0].name).toBe("onepassword");
+  });
+
+  it("detects provider setup problems and passes valid config", () => {
+    const missing = checkOpenclawProviderSetup({ parsedConfig: { providers: [] }, providerAlias: "onepassword" });
+    expect(missing.providerFound).toBe(false);
+    expect(missing.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
+
+    const bad = checkOpenclawProviderSetup({
+      parsedConfig: {
+        providers: [
+          {
+            name: "onepassword",
+            kind: "file",
+            config: {
+              jsonOnly: false,
+              passEnv: ["HOME"]
+            }
+          }
+        ]
+      },
+      providerAlias: "onepassword"
+    });
+    expect(bad.providerFound).toBe(true);
+    expect(bad.findings.some((finding) => finding.code === "provider_kind_mismatch")).toBe(true);
+    expect(bad.findings.some((finding) => finding.code === "provider_json_only_missing")).toBe(true);
+    expect(bad.findings.some((finding) => finding.code === "provider_command_missing")).toBe(true);
+    expect(bad.findings.some((finding) => finding.code === "provider_passenv_missing")).toBe(true);
+
+    const good = checkOpenclawProviderSetup({
+      parsedConfig: {
+        secrets: {
+          providers: [
+            {
+              name: "onepassword",
+              kind: "exec",
+              config: {
+                jsonOnly: true,
+                command: "/abs/path/openclaw-1p-sdk-resolver",
+                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
+              }
+            }
+          ]
+        }
+      },
+      providerAlias: "onepassword"
+    });
+    expect(good.providerFound).toBe(true);
+    expect(good.findings).toHaveLength(0);
+  });
+
+  it("matches provider by command fallback and handles invalid provider containers", () => {
+    const byCommand = checkOpenclawProviderSetup({
+      parsedConfig: {
+        providers: [
+          {
+            name: "different-name",
+            kind: "exec",
+            config: {
+              jsonOnly: true,
+              command: "/usr/local/bin/openclaw-1p-sdk-resolver",
+              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG", 42]
+            }
+          }
+        ]
+      },
+      providerAlias: "onepassword"
+    });
+    expect(byCommand.providerFound).toBe(true);
+    expect(byCommand.findings).toHaveLength(0);
+
+    const invalidContainers = checkOpenclawProviderSetup({
+      parsedConfig: {
+        secrets: {
+          providers: "not-an-array"
+        }
+      },
+      providerAlias: "onepassword"
+    });
+    expect(invalidContainers.providerFound).toBe(false);
+    expect(invalidContainers.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
   });
 });

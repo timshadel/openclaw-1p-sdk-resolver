@@ -4,6 +4,7 @@ import path from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { canReadPath, ensureRevealAllowed, runCli, writeConfigFileSafely } from "../src/cli.js";
+import { EXIT_POLICY } from "../src/exit-policy.js";
 import type { SecretResolver } from "../src/onepassword.js";
 
 type Captured = {
@@ -51,7 +52,7 @@ describe("command cli", () => {
       })
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
       provenance: Record<string, unknown>;
       env: { opServiceAccountTokenPresent: boolean };
@@ -70,7 +71,7 @@ describe("command cli", () => {
       streams: missingTokenStreams,
       runResolver: async () => undefined
     });
-    expect(missingTokenCode).toBe(2);
+    expect(missingTokenCode).toBe(EXIT_POLICY.ERROR);
 
     const sdkFailStreams = createStreams();
     const sdkFailCode = await runCli(["doctor", "--json"], {
@@ -84,7 +85,7 @@ describe("command cli", () => {
         throw new Error("sdk-down");
       }
     });
-    expect(sdkFailCode).toBe(3);
+    expect(sdkFailCode).toBe(EXIT_POLICY.RUNTIME);
   });
 
   it("doctor human output uses aligned fields and ascii table columns", async () => {
@@ -102,7 +103,7 @@ describe("command cli", () => {
       })
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(streams.out.stdout).toContain("DOCTOR REPORT");
     expect(streams.out.stdout).toContain("CONFIGURATION STATUS");
     expect(streams.out.stdout).toContain("ENVIRONMENT STATUS");
@@ -136,7 +137,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(2);
+    expect(code).toBe(EXIT_POLICY.ERROR);
     expect(streams.out.stdout).toContain("VALIDATION ISSUES");
     expect(streams.out.stdout).toContain("invalid_vault_policy");
     expect(streams.out.stdout).toContain("vaultPolicy");
@@ -152,7 +153,7 @@ describe("command cli", () => {
       streams: dryRunStreams,
       runResolver: async () => undefined
     });
-    expect(dryRunCode).toBe(2);
+    expect(dryRunCode).toBe(EXIT_POLICY.ERROR);
     expect(dryRunStreams.out.stderr).toContain("defaultVault is required");
     expect(existsSync(configPath)).toBe(false);
 
@@ -162,7 +163,7 @@ describe("command cli", () => {
       streams: writeStreams,
       runResolver: async () => undefined
     });
-    expect(writeCode).toBe(0);
+    expect(writeCode).toBe(EXIT_POLICY.OK);
     expect(existsSync(configPath)).toBe(true);
 
     const failOverwriteStreams = createStreams();
@@ -171,7 +172,7 @@ describe("command cli", () => {
       streams: failOverwriteStreams,
       runResolver: async () => undefined
     });
-    expect(failOverwriteCode).toBe(2);
+    expect(failOverwriteCode).toBe(EXIT_POLICY.ERROR);
 
     const forceOverwriteStreams = createStreams();
     const forceOverwriteCode = await runCli(
@@ -183,7 +184,7 @@ describe("command cli", () => {
       }
     );
 
-    expect(forceOverwriteCode).toBe(0);
+    expect(forceOverwriteCode).toBe(EXIT_POLICY.OK);
 
     const parsed = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
     expect(parsed.defaultVault).toBe("MainVault");
@@ -200,7 +201,7 @@ describe("command cli", () => {
       streams: dryRunStreams,
       runResolver: async () => undefined
     });
-    expect(dryRunCode).toBe(0);
+    expect(dryRunCode).toBe(EXIT_POLICY.OK);
     expect(dryRunStreams.out.stdout).toContain("ExistingVault");
 
     const writeStreams = createStreams();
@@ -209,7 +210,7 @@ describe("command cli", () => {
       streams: writeStreams,
       runResolver: async () => undefined
     });
-    expect(writeCode).toBe(0);
+    expect(writeCode).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
     expect(parsed.defaultVault).toBe("ExistingVault");
     expect(parsed.vaultPolicy).toBe("default_vault");
@@ -223,7 +224,7 @@ describe("command cli", () => {
       streams: dryRunStreams,
       runResolver: async () => undefined
     });
-    expect(dryRunCode).toBe(0);
+    expect(dryRunCode).toBe(EXIT_POLICY.OK);
     const dryRunJson = JSON.parse(dryRunStreams.out.stdout) as {
       wrote: boolean;
       dryRun: boolean;
@@ -241,7 +242,7 @@ describe("command cli", () => {
       streams: writeStreams,
       runResolver: async () => undefined
     });
-    expect(writeCode).toBe(0);
+    expect(writeCode).toBe(EXIT_POLICY.OK);
     const writeJson = JSON.parse(writeStreams.out.stdout) as {
       wrote: boolean;
       dryRun: boolean;
@@ -260,7 +261,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(streams.out.stdout).toContain("CONFIG PATH");
     expect(streams.out.stdout).toContain("| Field");
     expect(streams.out.stdout).toContain("| Path");
@@ -277,7 +278,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as { source: string; exists: boolean; readable: boolean };
     expect(parsed.source).toBeTruthy();
     expect(typeof parsed.exists).toBe("boolean");
@@ -292,7 +293,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(streams.out.stdout).toContain("EFFECTIVE CONFIGURATION");
     expect(streams.out.stdout).toContain("| Key");
     expect(streams.out.stdout).toContain("| Effective Value");
@@ -308,7 +309,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(2);
+    expect(code).toBe(EXIT_POLICY.ERROR);
     expect(streams.out.stdout).toContain("CONFIG PATH");
     expect(streams.out.stdout).toContain("VALIDATION ISSUES");
     expect(streams.out.stdout).toContain("invalid_vault_policy");
@@ -323,7 +324,7 @@ describe("command cli", () => {
       streams: defaultsJsonStreams,
       runResolver: async () => undefined
     });
-    expect(defaultsJsonCode).toBe(0);
+    expect(defaultsJsonCode).toBe(EXIT_POLICY.OK);
     const defaultsJson = JSON.parse(defaultsJsonStreams.out.stdout) as Record<string, unknown>;
     expect(defaultsJson.defaultVault).toBe("default");
 
@@ -333,7 +334,7 @@ describe("command cli", () => {
       streams: defaultsHumanStreams,
       runResolver: async () => undefined
     });
-    expect(defaultsHumanCode).toBe(0);
+    expect(defaultsHumanCode).toBe(EXIT_POLICY.OK);
     expect(defaultsHumanStreams.out.stdout).toContain("DEFAULT CONFIGURATION");
 
     const currentFileJsonStreams = createStreams();
@@ -342,7 +343,7 @@ describe("command cli", () => {
       streams: currentFileJsonStreams,
       runResolver: async () => undefined
     });
-    expect(currentFileJsonCode).toBe(0);
+    expect(currentFileJsonCode).toBe(EXIT_POLICY.OK);
     const currentFileJson = JSON.parse(currentFileJsonStreams.out.stdout) as Record<string, unknown>;
     expect(currentFileJson.defaultVault).toBe("MainVault");
 
@@ -352,7 +353,7 @@ describe("command cli", () => {
       streams: currentFileHumanStreams,
       runResolver: async () => undefined
     });
-    expect(currentFileHumanCode).toBe(0);
+    expect(currentFileHumanCode).toBe(EXIT_POLICY.OK);
     expect(currentFileHumanStreams.out.stdout).toContain("CURRENT CONFIG FILE");
   });
 
@@ -369,7 +370,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
       config: Record<string, unknown>;
       provenance: Record<string, unknown>;
@@ -390,7 +391,7 @@ describe("command cli", () => {
       streams: missingStreams,
       runResolver: async () => undefined
     });
-    expect(missingCode).toBe(2);
+    expect(missingCode).toBe(EXIT_POLICY.ERROR);
     expect(missingStreams.out.stderr).toContain("No config file exists");
 
     const malformedHome = path.join(
@@ -407,7 +408,7 @@ describe("command cli", () => {
       streams: malformedStreams,
       runResolver: async () => undefined
     });
-    expect(malformedCode).toBe(2);
+    expect(malformedCode).toBe(EXIT_POLICY.ERROR);
     expect(malformedStreams.out.stderr).toContain("Config file is not valid JSON");
   });
 
@@ -426,14 +427,14 @@ describe("command cli", () => {
         streams,
         runResolver: async () => undefined
       });
-      expect(code).toBe(2);
+      expect(code).toBe(EXIT_POLICY.ERROR);
       expect(streams.out.stderr).toContain("Resolved config file is not readable.");
     } finally {
       chmodSync(configPath, 0o600);
     }
   });
 
-  it("openclaw snippet human output uses table format", async () => {
+  it("openclaw snippet outputs json by default", async () => {
     const streams = createStreams();
     const code = await runCli(["openclaw", "snippet"], {
       env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
@@ -441,169 +442,170 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
-    expect(streams.out.stdout).toContain("OPENCLAW PROVIDER SNIPPET");
-    expect(streams.out.stdout).toContain("| Field");
-    expect(streams.out.stdout).toContain("| Command");
-    expect(streams.out.stdout).toContain("/absolute/path/to/openclaw-1p-sdk-resolver");
-    expect(streams.out.stdout.includes("\t")).toBe(false);
-  });
-
-  it("openclaw snippet supports json output", async () => {
-    const streams = createStreams();
-    const code = await runCli(["openclaw", "snippet", "--json"], {
-      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
-      streams,
-      runResolver: async () => undefined
-    });
-
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      providers: Array<{ kind: string; config: { jsonOnly: boolean; passEnv: string[] } }>;
+      providers: Array<{ name: string; kind: string; config: { jsonOnly: boolean; passEnv: string[] } }>;
     };
+    expect(parsed.providers[0].name).toBe("onepassword");
     expect(parsed.providers[0].kind).toBe("exec");
     expect(parsed.providers[0].config.jsonOnly).toBe(true);
     expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
   });
 
-  it("openclaw audit scan uses openclaw env precedence and emits safe json findings", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const stateDir = path.join(root, "state");
-    const homeDir = path.join(root, "home");
-    mkdirSync(stateDir, { recursive: true });
-    mkdirSync(path.join(homeDir, ".openclaw"), { recursive: true });
-    writeFileSync(
-      path.join(stateDir, "openclaw.json"),
-      JSON.stringify({
-        secrets: ["op://MainVault/Item/token"]
-      }),
-      "utf8"
+  it("openclaw snippet supports provider and command overrides", async () => {
+    const streams = createStreams();
+    const code = await runCli(
+      ["openclaw", "snippet", "--provider", "op_sdk", "--command", "/usr/local/bin/openclaw-1p-sdk-resolver"],
+      {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      runResolver: async () => undefined
+      }
     );
-    writeFileSync(path.join(root, ".env"), "API_TOKEN=supersecretvalue123456\n", "utf8");
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      providers: Array<{ name: string; kind: string; config: { command: string; jsonOnly: boolean; passEnv: string[] } }>;
+    };
+    expect(parsed.providers[0].name).toBe("op_sdk");
+    expect(parsed.providers[0].kind).toBe("exec");
+    expect(parsed.providers[0].config.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
+    expect(parsed.providers[0].config.jsonOnly).toBe(true);
+    expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+  });
+
+  it("openclaw check --json reports provider findings and sdk status", async () => {
+    const root = path.join(tmpdir(), `onep-cli-check-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    const configPath = path.join(root, "openclaw.json");
+    writeFileSync(configPath, JSON.stringify({ providers: [] }), "utf8");
 
     const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "scan", "--json", "--repo", root], {
+    const code = await runCli(["openclaw", "check", "--path", configPath, "--json"], {
       env: {
-        OPENCLAW_STATE_DIR: stateDir,
-        HOME: homeDir
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
       },
       streams,
-      runResolver: async () => undefined
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      configPath: { source: string };
-      summary: { referencesFound: number; candidateSecrets: number };
-      findings: Array<{ type: string; fingerprint: string }>;
+      status: string;
+      provider: { providerFound: boolean; findings: Array<{ code: string }> };
+      resolver: { tokenPresent: boolean; sdkStatus: string };
+      actions: string[];
     };
-    expect(parsed.configPath.source).toBe("OPENCLAW_STATE_DIR");
-    expect(parsed.summary.referencesFound).toBe(1);
-    expect(parsed.summary.candidateSecrets).toBeGreaterThan(0);
-    expect(parsed.findings[0].fingerprint.includes("supersecretvalue123456")).toBe(false);
+    expect(parsed.status).toBe("findings");
+    expect(parsed.provider.providerFound).toBe(false);
+    expect(parsed.provider.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
+    expect(parsed.resolver.tokenPresent).toBe(true);
+    expect(parsed.resolver.sdkStatus).toBe("ok");
+    expect(parsed.actions.length).toBeGreaterThan(0);
   });
 
-  it("openclaw audit suggest reports recommendations in human output", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-suggest-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    mkdirSync(root, { recursive: true });
-    writeFileSync(path.join(root, "openclaw.json"), "{\"providers\":[]}\n", "utf8");
-
-    const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "suggest", "--path", path.join(root, "openclaw.json")], {
-      env: {},
-      streams,
-      runResolver: async () => undefined
-    });
-    expect(code).toBe(0);
-    expect(streams.out.stdout).toContain("OPENCLAW AUDIT");
-    expect(streams.out.stdout).toContain("SUGGESTIONS");
-  });
-
-  it("openclaw audit returns code 2 for unknown audit mode", async () => {
-    const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "unknown-mode"], {
-      env: {},
-      streams,
-      runResolver: async () => undefined
-    });
-    expect(code).toBe(2);
-    expect(streams.out.stderr).toContain("Unknown audit mode");
-  });
-
-  it("openclaw audit suggest --json works without reading repo findings", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-suggest-json-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    mkdirSync(root, { recursive: true });
-    writeFileSync(path.join(root, "openclaw.json"), "{\"providers\":[]}\n", "utf8");
-    const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "suggest", "--json", "--path", path.join(root, "openclaw.json")], {
-      env: {},
-      streams,
-      runResolver: async () => undefined
-    });
-    expect(code).toBe(0);
-    const parsed = JSON.parse(streams.out.stdout) as {
-      mode: string;
-      findings: unknown[];
-      suggestions: string[];
-    };
-    expect(parsed.mode).toBe("suggest");
-    expect(parsed.findings).toEqual([]);
-    expect(parsed.suggestions.length).toBeGreaterThan(0);
-  });
-
-  it("openclaw audit scan human output shows no-findings row when repo has none", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-empty-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  it("openclaw check --check returns findings exit code and parse/read errors", async () => {
+    const root = path.join(tmpdir(), `onep-cli-check-check-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(root, { recursive: true });
     const cfg = path.join(root, "openclaw.json");
     writeFileSync(cfg, "{\"providers\":[]}\n", "utf8");
-    const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "scan", "--path", cfg, "--repo", root], {
-      env: {},
-      streams,
+
+    const findingsStreams = createStreams();
+    const findingsCode = await runCli(["openclaw", "check", "--check", "--path", cfg], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: findingsStreams,
       runResolver: async () => undefined
     });
-    expect(code).toBe(0);
-    expect(streams.out.stdout).toContain("FINDINGS");
-    expect(streams.out.stdout).toContain("No findings.");
-  });
+    expect(findingsCode).toBe(EXIT_POLICY.FINDINGS);
 
-  it("openclaw audit returns code 2 when config path exists but is unreadable", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-unreadable-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    mkdirSync(root, { recursive: true });
-    const cfg = path.join(root, "openclaw.json");
-    writeFileSync(cfg, "{\"providers\":[]}\n", "utf8");
+    const parseStreams = createStreams();
+    writeFileSync(cfg, "{ invalid", "utf8");
+    const parseCode = await runCli(["openclaw", "check", "--path", cfg], {
+      env: {},
+      streams: parseStreams,
+      runResolver: async () => undefined
+    });
+    expect(parseCode).toBe(EXIT_POLICY.ERROR);
+
+    const unreadableStreams = createStreams();
     chmodSync(cfg, 0o000);
-    const streams = createStreams();
     try {
-      const code = await runCli(["openclaw", "audit", "scan", "--json", "--path", cfg], {
+      const unreadableCode = await runCli(["openclaw", "check", "--path", cfg], {
         env: {},
-        streams,
+        streams: unreadableStreams,
         runResolver: async () => undefined
       });
-      expect(code).toBe(2);
-      const parsed = JSON.parse(streams.out.stdout) as {
-        configPath: { exists: boolean; readable: boolean };
-      };
-      expect(parsed.configPath.exists).toBe(true);
-      expect(parsed.configPath.readable).toBe(false);
+      expect(unreadableCode).toBe(EXIT_POLICY.ERROR);
     } finally {
       chmodSync(cfg, 0o600);
     }
   });
 
-  it("openclaw audit marks parse as invalid for malformed config", async () => {
-    const root = path.join(tmpdir(), `onep-cli-audit-invalid-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  it("openclaw check returns runtime exit code when sdk init fails", async () => {
+    const root = path.join(tmpdir(), `onep-cli-check-runtime-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(path.join(root, "openclaw.json"), "{\"providers\":[]}\n", "utf8");
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "check", "--json", "--path", path.join(root, "openclaw.json")], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      createResolver: async () => {
+        throw new Error("sdk-down");
+      }
+    });
+    expect(code).toBe(EXIT_POLICY.RUNTIME);
+    const parsed = JSON.parse(streams.out.stdout) as { status: string };
+    expect(parsed.status).toBe("runtime-error");
+  });
+
+  it("openclaw diagnose includes extended resolver config details", async () => {
+    const root = path.join(tmpdir(), `onep-cli-diagnose-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(root, { recursive: true });
     const cfg = path.join(root, "openclaw.json");
-    writeFileSync(cfg, "{ invalid ", "utf8");
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        secrets: {
+          providers: [
+            {
+              name: "onepassword",
+              kind: "exec",
+              config: {
+                jsonOnly: true,
+                command: "/abs/path/openclaw-1p-sdk-resolver",
+                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
+              }
+            }
+          ]
+        }
+      }),
+      "utf8"
+    );
     const streams = createStreams();
-    const code = await runCli(["openclaw", "audit", "scan", "--path", cfg], {
-      env: {},
+    const code = await runCli(["openclaw", "diagnose", "--json", "--path", cfg], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
       streams,
       runResolver: async () => undefined
     });
-    expect(code).toBe(0);
-    expect(streams.out.stdout).toContain("invalid-json");
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      status: string;
+      resolverConfig: Record<string, unknown>;
+      resolverProvenance: Record<string, unknown>;
+      provider: { findings: unknown[] };
+    };
+    expect(parsed.status).toBe("findings");
+    expect(parsed.provider.findings).toEqual([]);
+    expect(parsed.resolverConfig.defaultVault).toBe("MainVault");
+    expect(parsed.resolverProvenance.defaultVault).toBeDefined();
   });
 
   it("resolve returns redacted values by default", async () => {
@@ -628,7 +630,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(streams.out.stdout.includes("supersecretvalue")).toBe(false);
     const parsed = JSON.parse(streams.out.stdout) as {
       reveal: boolean;
@@ -661,7 +663,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(noYesCode).toBe(2);
+    expect(noYesCode).toBe(EXIT_POLICY.ERROR);
     expect(noYesStreams.out.stdout.includes("revealed-secret")).toBe(false);
 
     const yesStreams = createStreams();
@@ -675,7 +677,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(yesCode).toBe(0);
+    expect(yesCode).toBe(EXIT_POLICY.OK);
     expect(yesStreams.out.stdout.includes("revealed-secret")).toBe(true);
   });
 
@@ -701,7 +703,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(streams.out.stdout).toContain("RESOLVE RESULTS");
     expect(streams.out.stdout).toContain("| ID");
     expect(streams.out.stdout).toContain("| Status");
@@ -725,7 +727,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(1);
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
     const parsed = JSON.parse(streams.out.stdout) as {
       debug: boolean;
       reveal: boolean;
@@ -755,7 +757,7 @@ describe("command cli", () => {
       }
     );
 
-    expect(code).toBe(1);
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
     const parsed = JSON.parse(streams.out.stdout) as {
       results: Array<{ output: string; reason?: string }>;
     };
@@ -778,7 +780,7 @@ describe("command cli", () => {
       },
       runResolver: async () => undefined
     });
-    expect(stdinCode).toBe(0);
+    expect(stdinCode).toBe(EXIT_POLICY.OK);
 
     const runtimeFailStreams = createStreams();
     const runtimeFailCode = await runCli(["resolve", "--id", "MyAPI/token"], {
@@ -794,7 +796,7 @@ describe("command cli", () => {
       },
       runResolver: async () => undefined
     });
-    expect(runtimeFailCode).toBe(3);
+    expect(runtimeFailCode).toBe(EXIT_POLICY.RUNTIME);
     expect(runtimeFailStreams.out.stderr).toContain("Resolver runtime failed.");
   });
 
@@ -808,7 +810,7 @@ describe("command cli", () => {
       streams: invalidConfigStreams,
       runResolver: async () => undefined
     });
-    expect(invalidConfigCode).toBe(2);
+    expect(invalidConfigCode).toBe(EXIT_POLICY.ERROR);
     expect(invalidConfigStreams.out.stderr).toContain("Configuration is invalid");
 
     const missingTokenStreams = createStreams();
@@ -817,7 +819,7 @@ describe("command cli", () => {
       streams: missingTokenStreams,
       runResolver: async () => undefined
     });
-    expect(missingTokenCode).toBe(2);
+    expect(missingTokenCode).toBe(EXIT_POLICY.ERROR);
     expect(missingTokenStreams.out.stderr).toContain("OP_SERVICE_ACCOUNT_TOKEN is required");
   });
 
@@ -849,7 +851,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(out).toContain("revealed-from-prompt");
     expect(err).toBe("");
   });
@@ -864,7 +866,7 @@ describe("command cli", () => {
       streams,
       runResolver: async () => undefined
     });
-    expect(code).toBe(1);
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
     expect(streams.out.stderr).toContain("No valid ids to resolve.");
   });
 
@@ -878,7 +880,7 @@ describe("command cli", () => {
       streams,
       runResolver: async () => undefined
     });
-    expect(code).toBe(1);
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
     expect(streams.out.stdout).toContain("RESOLVE RESULTS");
     expect(streams.out.stdout).toContain("policy-blocked");
     expect(streams.out.stdout).toContain("filtered");
@@ -897,7 +899,7 @@ describe("command cli", () => {
       }),
       runResolver: async () => undefined
     });
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
       results: Array<{ status: string; output: string }>;
     };
@@ -918,7 +920,7 @@ describe("command cli", () => {
       },
       runResolver: async () => undefined
     });
-    expect(code).toBe(1);
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
     expect(streams.out.stdout).toContain("| Reason");
     expect(streams.out.stdout).toContain("resolved");
     expect(streams.out.stdout).toContain("policy-blocked");
@@ -942,7 +944,7 @@ describe("command cli", () => {
       runResolver: async () => undefined
     });
 
-    expect(code).toBe(2);
+    expect(code).toBe(EXIT_POLICY.ERROR);
     expect(streams.out.stderr).toContain("Refusing to write config to a symbolic link path.");
     expect(readFileSync(realTargetPath, "utf8")).toContain("\"do_not\":\"overwrite\"");
   });
@@ -954,7 +956,7 @@ describe("command cli", () => {
       streams,
       runResolver: async () => undefined
     });
-    expect(code).toBe(2);
+    expect(code).toBe(EXIT_POLICY.ERROR);
     expect(streams.out.stderr).toContain("Unable to resolve config path.");
   });
 
@@ -965,7 +967,7 @@ describe("command cli", () => {
       streams: unknownCommandStreams,
       runResolver: async () => undefined
     });
-    expect(unknownCommandCode).toBe(2);
+    expect(unknownCommandCode).toBe(EXIT_POLICY.ERROR);
     expect(unknownCommandStreams.out.stderr).toContain("Unknown command: unknown-command");
 
     const unknownConfigSubcommandStreams = createStreams();
@@ -974,7 +976,7 @@ describe("command cli", () => {
       streams: unknownConfigSubcommandStreams,
       runResolver: async () => undefined
     });
-    expect(unknownConfigSubcommandCode).toBe(2);
+    expect(unknownConfigSubcommandCode).toBe(EXIT_POLICY.ERROR);
     expect(unknownConfigSubcommandStreams.out.stderr).toContain("Unknown config subcommand");
 
     const unknownOpenclawSubcommandStreams = createStreams();
@@ -983,7 +985,7 @@ describe("command cli", () => {
       streams: unknownOpenclawSubcommandStreams,
       runResolver: async () => undefined
     });
-    expect(unknownOpenclawSubcommandCode).toBe(2);
+    expect(unknownOpenclawSubcommandCode).toBe(EXIT_POLICY.ERROR);
     expect(unknownOpenclawSubcommandStreams.out.stderr).toContain("Unknown openclaw subcommand");
   });
 
@@ -997,7 +999,7 @@ describe("command cli", () => {
         called = true;
       }
     });
-    expect(code).toBe(0);
+    expect(code).toBe(EXIT_POLICY.OK);
     expect(called).toBe(true);
   });
 

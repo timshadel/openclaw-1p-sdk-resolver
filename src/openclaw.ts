@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { accessSync, constants as fsConstants, existsSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -11,12 +10,23 @@ export type OpenclawConfigPathResolution = {
   readable: boolean;
 };
 
-export type AuditFinding = {
-  type: "already_1password" | "candidate_for_1password" | "risky_literal";
-  file: string;
-  line: number;
-  key: string;
-  fingerprint: string;
+export type OpenclawProviderFinding = {
+  code:
+    | "provider_missing"
+    | "provider_kind_mismatch"
+    | "provider_json_only_missing"
+    | "provider_command_missing"
+    | "provider_passenv_missing";
+  message: string;
+  path: string;
+  expected?: unknown;
+  actual?: unknown;
+};
+
+export type OpenclawProviderCheckResult = {
+  providerFound: boolean;
+  findings: OpenclawProviderFinding[];
+  suggestions: string[];
 };
 
 export function resolveOpenclawConfigPath(options: {
@@ -101,17 +111,6 @@ export function resolveOpenclawConfigPath(options: {
   };
 }
 
-export function collectOpenclawReferences(text: string): string[] {
-  const refs = new Set<string>();
-  const pattern = /op:\/\/[^\s"'`]+/g;
-  let match = pattern.exec(text);
-  while (match) {
-    refs.add(match[0]);
-    match = pattern.exec(text);
-  }
-  return [...refs];
-}
-
 export function parseOpenclawConfigText(text: string): { parsed?: unknown; parseError?: string } {
   try {
     return { parsed: JSON.parse(text) };
@@ -127,152 +126,142 @@ export function parseOpenclawConfigText(text: string): { parsed?: unknown; parse
   }
 }
 
-export function scanRepositoryForSecretCandidates(options: { rootDir: string; maxFiles?: number }): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  const ignoreDirs = new Set([".git", "node_modules", "dist", "coverage", ".pnpm-store", ".turbo"]);
-  const maxFiles = options.maxFiles ?? 500;
-  const queue = [options.rootDir];
-  let scanned = 0;
-
-  while (queue.length > 0 && scanned < maxFiles) {
-    const currentDir = queue.shift();
-    if (!currentDir) {
-      continue;
-    }
-    let entries: Dirent<string>[];
-    try {
-      entries = readdirSync(currentDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const entryPath = path.join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        if (!ignoreDirs.has(entry.name)) {
-          queue.push(entryPath);
-        }
-        continue;
-      }
-      if (!entry.isFile()) {
-        continue;
-      }
-
-      scanned += 1;
-      if (scanned > maxFiles) {
-        break;
-      }
-
-      const size = safeFileSize(entryPath);
-      if (size === undefined || size > 1024 * 1024) {
-        continue;
-      }
-
-      let text: string;
-      try {
-        text = readFileSync(entryPath, "utf8");
-      } catch {
-        continue;
-      }
-
-      const lines = text.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
-        const refMatch = /\bop:\/\/[^\s"'`]+/.exec(line);
-        if (refMatch) {
-          findings.push({
-            type: "already_1password",
-            file: entryPath,
-            line: i + 1,
-            key: "op-ref",
-            fingerprint: fingerprint(refMatch[0])
-          });
-        }
-
-        const literalRegex =
-          /\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|PRIVATE_KEY|AUTH)[A-Z0-9_]*)\b\s*[:=]\s*["']?([^"'\s#},]+)["']?/g;
-        let literalMatch = literalRegex.exec(line);
-        while (literalMatch) {
-          const key = literalMatch[1];
-          const value = literalMatch[2];
-          if (looksLikePlaceholder(value)) {
-            literalMatch = literalRegex.exec(line);
-            continue;
-          }
-          findings.push({
-            type: value.startsWith("op://") ? "already_1password" : "candidate_for_1password",
-            file: entryPath,
-            line: i + 1,
-            key,
-            fingerprint: fingerprint(value)
-          });
-          literalMatch = literalRegex.exec(line);
-        }
-
-        const riskyInlineLiteral = /(ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})/.exec(line);
-        if (riskyInlineLiteral) {
-          findings.push({
-            type: "risky_literal",
-            file: entryPath,
-            line: i + 1,
-            key: "inline-token",
-            fingerprint: fingerprint(riskyInlineLiteral[1])
-          });
+export function buildResolverProviderSnippet(options: {
+  commandHint: string;
+  providerAlias?: string;
+}): {
+  providers: Array<{
+    name: string;
+    kind: "exec";
+    config: {
+      jsonOnly: true;
+      command: string;
+      passEnv: string[];
+      trustedDirs: string[];
+    };
+  }>;
+} {
+  const providerAlias = options.providerAlias?.trim() || "onepassword";
+  return {
+    providers: [
+      {
+        name: providerAlias,
+        kind: "exec",
+        config: {
+          jsonOnly: true,
+          command: options.commandHint,
+          passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"],
+          trustedDirs: ["$HOME/.local/bin", "$HOME/bin"]
         }
       }
-    }
-  }
-
-  return findings;
+    ]
+  };
 }
 
-export function suggestOpenclawProviderImprovements(options: {
-  openclawText?: string;
-  references: string[];
-}): string[] {
+export function checkOpenclawProviderSetup(options: {
+  parsedConfig: unknown;
+  providerAlias?: string;
+}): OpenclawProviderCheckResult {
+  const findings: OpenclawProviderFinding[] = [];
   const suggestions: string[] = [];
-  const text = options.openclawText ?? "";
-  const hasResolverCommand = text.includes("openclaw-1p-sdk-resolver");
-  if (!hasResolverCommand) {
-    suggestions.push("Add an exec provider that invokes openclaw-1p-sdk-resolver.");
+  const providerAlias = options.providerAlias?.trim() || "onepassword";
+  const root = options.parsedConfig as Record<string, unknown> | undefined;
+  if (!root || typeof root !== "object") {
+    return {
+      providerFound: false,
+      findings: [
+        {
+          code: "provider_missing",
+          message: "OpenClaw config is not an object with provider entries.",
+          path: "providers"
+        }
+      ],
+      suggestions: ["Ensure openclaw.json contains a providers array with the resolver exec provider."]
+    };
   }
-  if (!text.includes("\"jsonOnly\": true")) {
-    suggestions.push("Set provider config jsonOnly: true.");
-  }
-  if (!text.includes("OP_SERVICE_ACCOUNT_TOKEN")) {
-    suggestions.push("Include OP_SERVICE_ACCOUNT_TOKEN in passEnv.");
-  }
-  if (!text.includes("OP_RESOLVER_CONFIG")) {
-    suggestions.push("Include OP_RESOLVER_CONFIG in passEnv when using custom resolver config paths.");
-  }
-  if (options.references.length === 0) {
-    suggestions.push("No op:// references found; migrate candidate secrets to 1Password references.");
-  }
-  return suggestions;
-}
 
-function fingerprint(value: string): string {
-  const digest = createHash("sha256").update(value).digest("hex");
-  return `len=${value.length} sha256=${digest.slice(0, 12)}`;
-}
+  const providers = extractProviders(root);
+  const provider = providers.find((entry) => {
+    const name = cleanString((entry as Record<string, unknown>).name);
+    if (name === providerAlias) {
+      return true;
+    }
+    const config = (entry as Record<string, unknown>).config as Record<string, unknown> | undefined;
+    const command = cleanString(config?.command);
+    return typeof command === "string" && command.includes("openclaw-1p-sdk-resolver");
+  }) as Record<string, unknown> | undefined;
 
-function looksLikePlaceholder(value: string): boolean {
-  const lower = value.toLowerCase();
-  if (value.startsWith("${") || value.startsWith("$(") || value.startsWith("<")) {
-    return true;
+  if (!provider) {
+    findings.push({
+      code: "provider_missing",
+      message: `Provider '${providerAlias}' not found in OpenClaw config.`,
+      path: "providers[]"
+    });
+    suggestions.push("Add a resolver provider entry using `openclaw-1p-sdk-resolver openclaw snippet`.");
+    return {
+      providerFound: false,
+      findings,
+      suggestions
+    };
   }
-  if (lower.includes("example") || lower.includes("changeme") || lower.includes("placeholder")) {
-    return true;
-  }
-  return value.length < 8;
-}
 
-function safeFileSize(filePath: string): number | undefined {
-  try {
-    return statSync(filePath).size;
-  } catch {
-    return undefined;
+  const kind = cleanString(provider.kind);
+  if (kind !== "exec") {
+    findings.push({
+      code: "provider_kind_mismatch",
+      message: "Provider kind should be 'exec'.",
+      path: "providers[].kind",
+      expected: "exec",
+      actual: kind ?? provider.kind
+    });
   }
+
+  const config = (provider.config ?? {}) as Record<string, unknown>;
+  if (config.jsonOnly !== true) {
+    findings.push({
+      code: "provider_json_only_missing",
+      message: "Provider config jsonOnly should be true.",
+      path: "providers[].config.jsonOnly",
+      expected: true,
+      actual: config.jsonOnly
+    });
+  }
+
+  const command = cleanString(config.command);
+  if (!command) {
+    findings.push({
+      code: "provider_command_missing",
+      message: "Provider config command is required.",
+      path: "providers[].config.command",
+      expected: "absolute path to openclaw-1p-sdk-resolver",
+      actual: config.command
+    });
+  }
+
+  const passEnv = Array.isArray(config.passEnv) ? config.passEnv.filter((value): value is string => typeof value === "string") : [];
+  const required = ["OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"];
+  for (const key of required) {
+    if (!passEnv.includes(key)) {
+      findings.push({
+        code: "provider_passenv_missing",
+        message: `Provider config passEnv is missing ${key}.`,
+        path: "providers[].config.passEnv",
+        expected: key,
+        actual: passEnv
+      });
+    }
+  }
+
+  if (findings.length > 0) {
+    suggestions.push("Use `openclaw-1p-sdk-resolver openclaw snippet` to generate a valid provider block.");
+    suggestions.push("Update OpenClaw config manually; this tool does not edit OpenClaw files.");
+  }
+
+  return {
+    providerFound: true,
+    findings,
+    suggestions
+  };
 }
 
 function canRead(filePath: string): boolean {
@@ -285,4 +274,24 @@ function canRead(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function extractProviders(root: Record<string, unknown>): unknown[] {
+  const topLevelProviders = root.providers;
+  if (Array.isArray(topLevelProviders)) {
+    return topLevelProviders;
+  }
+  const secrets = root.secrets as Record<string, unknown> | undefined;
+  if (secrets && typeof secrets === "object" && Array.isArray(secrets.providers)) {
+    return secrets.providers;
+  }
+  return [];
+}
+
+function cleanString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
