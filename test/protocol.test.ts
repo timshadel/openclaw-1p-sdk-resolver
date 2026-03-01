@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatResponse, loadConfig, parseRequestBuffer } from "../src/protocol.js";
+import { formatResponse, loadConfig, loadEffectiveConfig, parseRequestBuffer } from "../src/protocol.js";
 
 function writeConfig(homeDir: string, body: string): string {
   const dir = path.join(homeDir, ".config", "openclaw-1p-sdk-resolver");
@@ -89,6 +89,47 @@ describe("protocol", () => {
 
     const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
     expect(config.defaultVault).toBe("OverrideVault");
+  });
+
+  it("prefers XDG_CONFIG_HOME over HOME", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-home-"));
+    const xdg = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-xdg-"));
+
+    writeConfig(home, JSON.stringify({ defaultVault: "HomeVault" }));
+    const xdgConfigDir = path.join(xdg, "openclaw-1p-sdk-resolver");
+    mkdirSync(xdgConfigDir, { recursive: true });
+    writeFileSync(
+      path.join(xdgConfigDir, "config.json"),
+      JSON.stringify({ defaultVault: "XdgVault" }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { HOME: home, XDG_CONFIG_HOME: xdg } });
+    expect(effective.config.defaultVault).toBe("XdgVault");
+    expect(effective.path.source).toBe("XDG_CONFIG_HOME");
+  });
+
+  it("uses OP_RESOLVER_CONFIG over XDG and HOME", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-home-"));
+    const xdg = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-xdg-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const overridePath = path.join(dir, "override.json");
+    writeFileSync(overridePath, JSON.stringify({ defaultVault: "OverrideVault" }), "utf8");
+
+    writeConfig(home, JSON.stringify({ defaultVault: "HomeVault" }));
+    const xdgConfigDir = path.join(xdg, "openclaw-1p-sdk-resolver");
+    mkdirSync(xdgConfigDir, { recursive: true });
+    writeFileSync(
+      path.join(xdgConfigDir, "config.json"),
+      JSON.stringify({ defaultVault: "XdgVault" }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({
+      env: { HOME: home, XDG_CONFIG_HOME: xdg, OP_RESOLVER_CONFIG: overridePath }
+    });
+    expect(effective.config.defaultVault).toBe("OverrideVault");
+    expect(effective.path.source).toBe("OP_RESOLVER_CONFIG");
   });
 
   it("falls back to defaults when config file is malformed json", () => {

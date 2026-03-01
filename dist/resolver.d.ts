@@ -18,5 +18,5 @@ export declare function readStdinWithLimit(stream: NodeJS.ReadableStream, maxByt
     buffer: Buffer;
 }>;
 export declare function runResolver(runtime?: ResolverRuntime): Promise<void>;
-export declare function runCli(): Promise<void>;
+export declare function runCli(argv?: string[]): Promise<void>;
 //# sourceMappingURL=resolver.d.ts.map

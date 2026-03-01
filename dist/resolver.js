@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
+import { runCli as runCommandCli } from "./cli.js";
 import { formatResponse, loadConfig, parseRequestBuffer } from "./protocol.js";
 import { createOnePasswordResolver, isValidSecretReference } from "./onepassword.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
@@ -153,14 +154,18 @@ export async function runResolver(runtime = {}) {
         await writeResponse(stdout, emptyResponse(protocolVersion));
     }
 }
-export async function runCli() {
-    await runResolver();
+export async function runCli(argv = process.argv.slice(2)) {
+    const exitCode = await runCommandCli(argv, {
+        env: process.env,
+        runResolver
+    });
+    process.exitCode = exitCode;
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
     runCli().then(() => {
-        process.exitCode = 0;
+        // runCli sets process.exitCode.
     }, () => {
-        process.exitCode = 0;
+        process.exitCode = 3;
     });
 }
 //# sourceMappingURL=resolver.js.map

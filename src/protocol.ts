@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { readFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -70,6 +70,60 @@ export type RuntimeConfig = {
   integrationVersion: string;
 };
 
+export type ConfigValueSource = "default" | "config-file" | "env";
+
+export type ConfigPathSource = "OP_RESOLVER_CONFIG" | "XDG_CONFIG_HOME" | "HOME" | "unresolved";
+
+export type ConfigPathResolution = {
+  path?: string;
+  source: ConfigPathSource;
+  reason: string;
+  exists: boolean;
+  readable: boolean;
+};
+
+export type ConfigProvenanceEntry<T> = {
+  value: T;
+  source: ConfigValueSource;
+  notes: string[];
+};
+
+export type ConfigProvenance = {
+  [K in keyof RuntimeConfig]: ConfigProvenanceEntry<RuntimeConfig[K]>;
+};
+
+export type ConfigIssue = {
+  level: "warning" | "error";
+  code: string;
+  message: string;
+  key?: keyof RuntimeConfig | "config-file" | "path";
+};
+
+type FileLoadResult = {
+  path: ConfigPathResolution;
+  fileConfig: FileConfig;
+  rawText?: string;
+  loaded: boolean;
+};
+
+export type EffectiveConfig = {
+  config: RuntimeConfig;
+  defaults: RuntimeConfig;
+  provenance: ConfigProvenance;
+  issues: ConfigIssue[];
+  path: ConfigPathResolution;
+  file: {
+    loaded: boolean;
+    rawText?: string;
+  };
+};
+
+type ConfigFs = {
+  readFileSync: typeof readFileSync;
+  existsSync: typeof existsSync;
+  accessSync: typeof accessSync;
+};
+
 function parseIntLike(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.trunc(value);
@@ -87,10 +141,33 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function resolveConfigPath(env: NodeJS.ProcessEnv): string | undefined {
+function createDefaultConfig(): RuntimeConfig {
+  return {
+    defaultVault: DEFAULTS.defaultVault,
+    vaultPolicy: DEFAULTS.vaultPolicy,
+    vaultWhitelist: [],
+    allowedIdRegex: undefined,
+    maxIds: DEFAULTS.maxIds,
+    maxStdinBytes: DEFAULTS.maxStdinBytes,
+    timeoutMs: DEFAULTS.timeoutMs,
+    stdinTimeoutMs: DEFAULTS.stdinTimeoutMs,
+    concurrency: DEFAULTS.concurrency,
+    integrationName: DEFAULTS.integrationName,
+    integrationVersion: DEFAULTS.integrationVersion
+  };
+}
+
+export function resolveConfigPath(env: NodeJS.ProcessEnv): ConfigPathResolution {
   // Explicit env override wins to support deterministic deployment wiring.
   if (env.OP_RESOLVER_CONFIG?.trim()) {
-    return env.OP_RESOLVER_CONFIG.trim();
+    const resolvedPath = env.OP_RESOLVER_CONFIG.trim();
+    return {
+      path: resolvedPath,
+      source: "OP_RESOLVER_CONFIG",
+      reason: "Using explicit OP_RESOLVER_CONFIG override.",
+      exists: existsSync(resolvedPath),
+      readable: false
+    };
   }
 
   const baseDir = env.XDG_CONFIG_HOME?.trim()
@@ -100,105 +177,432 @@ function resolveConfigPath(env: NodeJS.ProcessEnv): string | undefined {
       : undefined;
 
   if (!baseDir) {
-    return undefined;
+    return {
+      source: "unresolved",
+      reason: "No OP_RESOLVER_CONFIG, XDG_CONFIG_HOME, or HOME provided.",
+      exists: false,
+      readable: false
+    };
   }
 
-  return path.join(baseDir, "openclaw-1p-sdk-resolver", "config.json");
+  const resolvedPath = path.join(baseDir, "openclaw-1p-sdk-resolver", "config.json");
+  return {
+    path: resolvedPath,
+    source: env.XDG_CONFIG_HOME?.trim() ? "XDG_CONFIG_HOME" : "HOME",
+    reason: env.XDG_CONFIG_HOME?.trim()
+      ? "Using XDG_CONFIG_HOME as base directory."
+      : "Using HOME/.config as base directory.",
+    exists: existsSync(resolvedPath),
+    readable: false
+  };
 }
 
-function readConfigFile(env: NodeJS.ProcessEnv): FileConfig {
+function readConfigFile(env: NodeJS.ProcessEnv, issues: ConfigIssue[], fs: ConfigFs): FileLoadResult {
   const configPath = resolveConfigPath(env);
-  if (!configPath) {
-    return {};
+  if (!configPath.path) {
+    return {
+      path: configPath,
+      fileConfig: {},
+      loaded: false
+    };
+  }
+
+  const pathInfo: ConfigPathResolution = {
+    ...configPath
+  };
+
+  if (!fs.existsSync(configPath.path)) {
+    return {
+      path: pathInfo,
+      fileConfig: {},
+      loaded: false
+    };
   }
 
   try {
-    const raw = readFileSync(configPath, "utf8");
+    fs.accessSync(configPath.path, fsConstants.R_OK);
+    pathInfo.readable = true;
+  } catch {
+    issues.push({
+      level: "error",
+      code: "config_unreadable",
+      message: "Config file exists but is not readable.",
+      key: "path"
+    });
+    return {
+      path: pathInfo,
+      fileConfig: {},
+      loaded: false
+    };
+  }
+
+  try {
+    const raw = fs.readFileSync(configPath.path, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") {
-      return {};
+      issues.push({
+        level: "error",
+        code: "config_not_object",
+        message: "Config file JSON must be an object.",
+        key: "config-file"
+      });
+      return {
+        path: pathInfo,
+        fileConfig: {},
+        rawText: raw,
+        loaded: false
+      };
     }
-    return parsed as FileConfig;
+    return {
+      path: pathInfo,
+      fileConfig: parsed as FileConfig,
+      rawText: raw,
+      loaded: true
+    };
   } catch {
-    return {};
+    issues.push({
+      level: "error",
+      code: "config_parse_error",
+      message: "Config file is not valid JSON.",
+      key: "config-file"
+    });
+    return {
+      path: pathInfo,
+      fileConfig: {},
+      loaded: false
+    };
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
-  const fileConfig = readConfigFile(env);
+function cleanString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
-  const maxIds = clamp(parseIntLike(fileConfig.maxIds, DEFAULTS.maxIds), 1, CAPS.maxIds);
-  const maxStdinBytes = clamp(
-    parseIntLike(fileConfig.maxStdinBytes, DEFAULTS.maxStdinBytes),
-    1,
-    CAPS.maxStdinBytes
-  );
-  const timeoutMs = clamp(parseIntLike(fileConfig.timeoutMs, DEFAULTS.timeoutMs), 1000, 120_000);
-  const stdinTimeoutMs = clamp(
-    parseIntLike(fileConfig.stdinTimeoutMs, DEFAULTS.stdinTimeoutMs),
-    1000,
-    120_000
-  );
-  const concurrency = clamp(
-    parseIntLike(fileConfig.concurrency, DEFAULTS.concurrency),
-    1,
-    CAPS.concurrency
-  );
-
-  let allowedIdRegex: RegExp | undefined;
-  if (typeof fileConfig.allowedIdRegex === "string" && fileConfig.allowedIdRegex.length > 0) {
-    try {
-      allowedIdRegex = new RegExp(fileConfig.allowedIdRegex);
-    } catch {
-      // Invalid user regex should fail closed by matching nothing.
-      allowedIdRegex = /$a/;
-    }
+function readNumberSetting(options: {
+  key: keyof Pick<
+    RuntimeConfig,
+    "maxIds" | "maxStdinBytes" | "timeoutMs" | "stdinTimeoutMs" | "concurrency"
+  >;
+  raw: unknown;
+  fallback: number;
+  min: number;
+  max: number;
+  issues: ConfigIssue[];
+}): ConfigProvenanceEntry<number> {
+  if (options.raw === undefined) {
+    return {
+      value: options.fallback,
+      source: "default",
+      notes: []
+    };
   }
 
-  const configDefaultVault =
-    typeof fileConfig.defaultVault === "string" && fileConfig.defaultVault.trim().length > 0
-      ? fileConfig.defaultVault.trim()
-      : typeof fileConfig.vault === "string" && fileConfig.vault.trim().length > 0
-        ? fileConfig.vault.trim()
-        : DEFAULTS.defaultVault;
+  const parsed = parseIntLike(options.raw, Number.NaN);
+  if (!Number.isFinite(parsed)) {
+    options.issues.push({
+      level: "error",
+      code: "invalid_number",
+      message: `${options.key} must be a finite integer.`,
+      key: options.key
+    });
+    return {
+      value: options.fallback,
+      source: "default",
+      notes: ["Invalid value in config file; default applied."]
+    };
+  }
 
-  const vaultPolicy =
-    fileConfig.vaultPolicy === "default_vault" ||
-    fileConfig.vaultPolicy === "default_vault+whitelist" ||
-    fileConfig.vaultPolicy === "any"
-      ? fileConfig.vaultPolicy
-      : DEFAULTS.vaultPolicy;
+  const clamped = clamp(parsed, options.min, options.max);
+  const notes: string[] = [];
+  if (clamped !== parsed) {
+    notes.push(`Clamped from ${parsed} to ${clamped}.`);
+    options.issues.push({
+      level: "warning",
+      code: "clamped_value",
+      message: `${options.key} was clamped from ${parsed} to ${clamped}.`,
+      key: options.key
+    });
+  }
 
-  const vaultWhitelist = Array.isArray(fileConfig.vaultWhitelist)
-    ? Array.from(
+  return {
+    value: clamped,
+    source: "config-file",
+    notes
+  };
+}
+
+export function loadEffectiveConfig(options: {
+  env: NodeJS.ProcessEnv;
+  fs?: Partial<ConfigFs>;
+}): EffectiveConfig {
+  const fs: ConfigFs = {
+    readFileSync: options.fs?.readFileSync ?? readFileSync,
+    existsSync: options.fs?.existsSync ?? existsSync,
+    accessSync: options.fs?.accessSync ?? accessSync
+  };
+  const issues: ConfigIssue[] = [];
+  const defaults = createDefaultConfig();
+  const fileLoad = readConfigFile(options.env, issues, fs);
+  const fileConfig = fileLoad.fileConfig;
+
+  const defaultVaultFromDefaultVault = cleanString(fileConfig.defaultVault);
+  const defaultVaultFromLegacy = cleanString(fileConfig.vault);
+  let defaultVaultEntry: ConfigProvenanceEntry<string> = {
+    value: defaults.defaultVault,
+    source: "default",
+    notes: []
+  };
+  if (defaultVaultFromDefaultVault) {
+    defaultVaultEntry = {
+      value: defaultVaultFromDefaultVault,
+      source: "config-file",
+      notes: []
+    };
+  } else if (defaultVaultFromLegacy) {
+    defaultVaultEntry = {
+      value: defaultVaultFromLegacy,
+      source: "config-file",
+      notes: ["Using legacy 'vault' key."]
+    };
+  } else if (fileConfig.defaultVault !== undefined || fileConfig.vault !== undefined) {
+    issues.push({
+      level: "error",
+      code: "invalid_default_vault",
+      message: "defaultVault (or legacy vault) must be a non-empty string.",
+      key: "defaultVault"
+    });
+  }
+
+  const vaultPolicyEntry: ConfigProvenanceEntry<RuntimeConfig["vaultPolicy"]> =
+    fileConfig.vaultPolicy === undefined
+      ? { value: defaults.vaultPolicy, source: "default", notes: [] }
+      : fileConfig.vaultPolicy === "default_vault" ||
+          fileConfig.vaultPolicy === "default_vault+whitelist" ||
+          fileConfig.vaultPolicy === "any"
+        ? { value: fileConfig.vaultPolicy, source: "config-file", notes: [] }
+        : (() => {
+            issues.push({
+              level: "error",
+              code: "invalid_vault_policy",
+              message: "vaultPolicy must be one of default_vault, default_vault+whitelist, any.",
+              key: "vaultPolicy"
+            });
+            return {
+              value: defaults.vaultPolicy,
+              source: "default",
+              notes: ["Invalid value in config file; default applied."]
+            };
+          })();
+
+  const vaultWhitelistNotes: string[] = [];
+  let vaultWhitelistEntry: ConfigProvenanceEntry<string[]> = {
+    value: defaults.vaultWhitelist,
+    source: "default",
+    notes: []
+  };
+  if (fileConfig.vaultWhitelist !== undefined) {
+    if (!Array.isArray(fileConfig.vaultWhitelist)) {
+      issues.push({
+        level: "error",
+        code: "invalid_vault_whitelist",
+        message: "vaultWhitelist must be an array of strings.",
+        key: "vaultWhitelist"
+      });
+    } else {
+      const invalidEntries = fileConfig.vaultWhitelist.filter((entry) => typeof entry !== "string").length;
+      if (invalidEntries > 0) {
+        issues.push({
+          level: "warning",
+          code: "vault_whitelist_filtered",
+          message: "vaultWhitelist included non-string entries that were ignored.",
+          key: "vaultWhitelist"
+        });
+        vaultWhitelistNotes.push("Ignored non-string whitelist entries.");
+      }
+      const cleaned = Array.from(
         new Set(
           fileConfig.vaultWhitelist
             .filter((entry): entry is string => typeof entry === "string")
             .map((entry) => entry.trim())
             .filter((entry) => entry.length > 0)
         )
-      )
-    : [];
+      );
+      vaultWhitelistEntry = {
+        value: cleaned,
+        source: "config-file",
+        notes: vaultWhitelistNotes
+      };
+    }
+  }
+
+  const maxIdsEntry = readNumberSetting({
+    key: "maxIds",
+    raw: fileConfig.maxIds,
+    fallback: defaults.maxIds,
+    min: 1,
+    max: CAPS.maxIds,
+    issues
+  });
+  const maxStdinBytesEntry = readNumberSetting({
+    key: "maxStdinBytes",
+    raw: fileConfig.maxStdinBytes,
+    fallback: defaults.maxStdinBytes,
+    min: 1,
+    max: CAPS.maxStdinBytes,
+    issues
+  });
+  const timeoutMsEntry = readNumberSetting({
+    key: "timeoutMs",
+    raw: fileConfig.timeoutMs,
+    fallback: defaults.timeoutMs,
+    min: 1000,
+    max: 120_000,
+    issues
+  });
+  const stdinTimeoutMsEntry = readNumberSetting({
+    key: "stdinTimeoutMs",
+    raw: fileConfig.stdinTimeoutMs,
+    fallback: defaults.stdinTimeoutMs,
+    min: 1000,
+    max: 120_000,
+    issues
+  });
+  const concurrencyEntry = readNumberSetting({
+    key: "concurrency",
+    raw: fileConfig.concurrency,
+    fallback: defaults.concurrency,
+    min: 1,
+    max: CAPS.concurrency,
+    issues
+  });
+
+  let allowedIdRegexEntry: ConfigProvenanceEntry<RegExp | undefined> = {
+    value: defaults.allowedIdRegex,
+    source: "default",
+    notes: []
+  };
+  if (fileConfig.allowedIdRegex !== undefined) {
+    if (typeof fileConfig.allowedIdRegex !== "string" || fileConfig.allowedIdRegex.length === 0) {
+      issues.push({
+        level: "error",
+        code: "invalid_allowed_id_regex",
+        message: "allowedIdRegex must be a non-empty string when provided.",
+        key: "allowedIdRegex"
+      });
+    } else {
+      try {
+        allowedIdRegexEntry = {
+          value: new RegExp(fileConfig.allowedIdRegex),
+          source: "config-file",
+          notes: []
+        };
+      } catch {
+        allowedIdRegexEntry = {
+          value: /$a/,
+          source: "config-file",
+          notes: ["Invalid regex in config; fail-closed regex /$a/ applied."]
+        };
+        issues.push({
+          level: "error",
+          code: "invalid_allowed_id_regex",
+          message: "allowedIdRegex failed to compile; fail-closed regex applied.",
+          key: "allowedIdRegex"
+        });
+      }
+    }
+  }
+
+  function readStringSetting(
+    key: keyof Pick<RuntimeConfig, "integrationName" | "integrationVersion">,
+    raw: unknown,
+    fallback: string
+  ): ConfigProvenanceEntry<string> {
+    const cleaned = cleanString(raw);
+    if (raw === undefined) {
+      return {
+        value: fallback,
+        source: "default",
+        notes: []
+      };
+    }
+    if (!cleaned) {
+      issues.push({
+        level: "error",
+        code: "invalid_string",
+        message: `${key} must be a non-empty string.`,
+        key
+      });
+      return {
+        value: fallback,
+        source: "default",
+        notes: ["Invalid value in config file; default applied."]
+      };
+    }
+    return {
+      value: cleaned,
+      source: "config-file",
+      notes: []
+    };
+  }
+
+  const integrationNameEntry = readStringSetting(
+    "integrationName",
+    fileConfig.integrationName,
+    defaults.integrationName
+  );
+  const integrationVersionEntry = readStringSetting(
+    "integrationVersion",
+    fileConfig.integrationVersion,
+    defaults.integrationVersion
+  );
+
+  const config: RuntimeConfig = {
+    defaultVault: defaultVaultEntry.value,
+    vaultPolicy: vaultPolicyEntry.value,
+    vaultWhitelist: vaultWhitelistEntry.value,
+    allowedIdRegex: allowedIdRegexEntry.value,
+    maxIds: maxIdsEntry.value,
+    maxStdinBytes: maxStdinBytesEntry.value,
+    timeoutMs: timeoutMsEntry.value,
+    stdinTimeoutMs: stdinTimeoutMsEntry.value,
+    concurrency: concurrencyEntry.value,
+    integrationName: integrationNameEntry.value,
+    integrationVersion: integrationVersionEntry.value
+  };
+
+  const provenance: ConfigProvenance = {
+    defaultVault: defaultVaultEntry,
+    vaultPolicy: vaultPolicyEntry,
+    vaultWhitelist: vaultWhitelistEntry,
+    allowedIdRegex: allowedIdRegexEntry,
+    maxIds: maxIdsEntry,
+    maxStdinBytes: maxStdinBytesEntry,
+    timeoutMs: timeoutMsEntry,
+    stdinTimeoutMs: stdinTimeoutMsEntry,
+    concurrency: concurrencyEntry,
+    integrationName: integrationNameEntry,
+    integrationVersion: integrationVersionEntry
+  };
 
   return {
-    defaultVault: configDefaultVault,
-    vaultPolicy,
-    vaultWhitelist,
-    allowedIdRegex,
-    maxIds,
-    maxStdinBytes,
-    timeoutMs,
-    stdinTimeoutMs,
-    concurrency,
-    integrationName:
-      typeof fileConfig.integrationName === "string" && fileConfig.integrationName.trim().length > 0
-        ? fileConfig.integrationName.trim()
-        : DEFAULTS.integrationName,
-    integrationVersion:
-      typeof fileConfig.integrationVersion === "string" && fileConfig.integrationVersion.trim().length > 0
-        ? fileConfig.integrationVersion.trim()
-        : DEFAULTS.integrationVersion
+    config,
+    defaults,
+    provenance,
+    issues,
+    path: fileLoad.path,
+    file: {
+      loaded: fileLoad.loaded,
+      rawText: fileLoad.rawText
+    }
   };
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
+  return loadEffectiveConfig({ env }).config;
 }
 
 export function parseRequestBuffer(
