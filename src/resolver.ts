@@ -259,6 +259,17 @@ export type CliProcessInvocation = {
   processLike: { exitCode?: number | string };
 };
 
+function createProcessLikeAdapter(proc: NodeJS.Process): { exitCode?: number | string } {
+  return {
+    get exitCode() {
+      return proc.exitCode ?? undefined;
+    },
+    set exitCode(value: number | string | undefined) {
+      proc.exitCode = value;
+    }
+  };
+}
+
 export async function executeCliProcess(
   invocation: CliProcessInvocation,
   options: {
@@ -284,7 +295,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   await executeCliProcess({
     args: argv,
     env: process.env,
-    processLike: process
+    processLike: createProcessLikeAdapter(process)
   });
 }
 
@@ -295,7 +306,7 @@ export async function runMain(options: {
 } = {}): Promise<void> {
   const run = options.run ?? runCli;
   const argv = options.argv ?? process.argv.slice(2);
-  const processLike = options.processLike ?? process;
+  const processLike = options.processLike ?? createProcessLikeAdapter(process);
 
   try {
     await run(argv);

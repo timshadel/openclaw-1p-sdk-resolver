@@ -21,16 +21,20 @@
     "check:docs": "node scripts/check-readme-help-sync.mjs && node scripts/check-doc-comment-consistency.mjs",
     "check:governance": "node scripts/check-plan-adr-required.mjs",
     "ci:preflight": "pnpm build && pnpm test && pnpm test:coverage && pnpm check:coverage && pnpm check:docs && pnpm check:governance",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish",
     "prepack": "pnpm build"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@1password/sdk": "0.4.0"
   },
   "devDependencies": {
     "@types/node": "25.3.3",
+    "@changesets/cli": "^2.29.8",
     "@vitest/coverage-v8": "^3.2.4",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
