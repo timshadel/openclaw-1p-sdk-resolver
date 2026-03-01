@@ -56,3 +56,17 @@ Use [`TEMPLATE.md`](./TEMPLATE.md) for new ADRs.
 - New ADRs should start as `proposed` or `accepted`.
 - If a decision changes, create a new ADR and mark the old one `superseded`.
 - Never delete ADR files; preserve history.
+
+## Index
+
+- [`000-adr-process-and-governance.md`](./000-adr-process-and-governance.md)
+- [`001-exec-provider-fail-closed-contract.md`](./001-exec-provider-fail-closed-contract.md)
+- [`002-config-source-precedence-and-policy-enforcement.md`](./002-config-source-precedence-and-policy-enforcement.md)
+- [`003-input-hard-limits-and-sanitization-model.md`](./003-input-hard-limits-and-sanitization-model.md)
+- [`004-onepassword-adapter-fallback-strategy.md`](./004-onepassword-adapter-fallback-strategy.md)
+- [`005-process-boundary-seam-and-injected-runtime-context.md`](./005-process-boundary-seam-and-injected-runtime-context.md)
+- [`006-safe-diagnostics-and-reveal-gating.md`](./006-safe-diagnostics-and-reveal-gating.md)
+- [`007-openclaw-integration-read-only-policy.md`](./007-openclaw-integration-read-only-policy.md)
+- [`008-cli-surface-and-output-contracts.md`](./008-cli-surface-and-output-contracts.md)
+- [`009-provider-identity-and-command-family-naming.md`](./009-provider-identity-and-command-family-naming.md)
+- [`010-quality-gates-and-coverage-policy.md`](./010-quality-gates-and-coverage-policy.md)
