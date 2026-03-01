@@ -47,6 +47,19 @@ type TableColumn = {
   maxWidth?: number;
 };
 
+export type ResolveRow = {
+  id: string;
+  status: "resolved" | "unresolved";
+  output: string;
+  reason: string;
+};
+
+type SafeWriteFsOps = {
+  openSync: typeof openSync;
+  writeFileSync: typeof writeFileSync;
+  closeSync: typeof closeSync;
+};
+
 function normalizeStreams(runtime: CliRuntime): CliStreams {
   return {
     stdin: runtime.streams?.stdin ?? processStdin,
@@ -59,7 +72,7 @@ function isTruthyFlag(value: string | undefined): boolean {
   return value === "true" || value === "1" || value === "yes";
 }
 
-function parseFlags(args: string[]): { positionals: string[]; flags: Map<string, string[]> } {
+export function parseFlags(args: string[]): { positionals: string[]; flags: Map<string, string[]> } {
   const positionals: string[] = [];
   const flags = new Map<string, string[]>();
 
@@ -98,7 +111,7 @@ function parseFlags(args: string[]): { positionals: string[]; flags: Map<string,
   return { positionals, flags };
 }
 
-function getLastFlag(flags: Map<string, string[]>, name: string): string | undefined {
+export function getLastFlag(flags: Map<string, string[]>, name: string): string | undefined {
   const values = flags.get(name);
   if (!values || values.length === 0) {
     return undefined;
@@ -106,11 +119,11 @@ function getLastFlag(flags: Map<string, string[]>, name: string): string | undef
   return values[values.length - 1];
 }
 
-function hasFlag(flags: Map<string, string[]>, name: string): boolean {
+export function hasFlag(flags: Map<string, string[]>, name: string): boolean {
   return flags.has(name) && isTruthyFlag(getLastFlag(flags, name));
 }
 
-function getStringFlag(flags: Map<string, string[]>, name: string): string | undefined {
+export function getStringFlag(flags: Map<string, string[]>, name: string): string | undefined {
   if (!flags.has(name)) {
     return undefined;
   }
@@ -163,7 +176,7 @@ function printUsage(stream: NodeJS.WritableStream): void {
   );
 }
 
-function truncateCell(value: string, maxWidth: number): string {
+export function truncateCell(value: string, maxWidth: number): string {
   if (value.length <= maxWidth) {
     return value;
   }
@@ -177,7 +190,7 @@ function padRight(value: string, width: number): string {
   return value.padEnd(width, " ");
 }
 
-function displayValue(value: unknown): string {
+export function displayValue(value: unknown): string {
   if (value === undefined) {
     return "-";
   }
@@ -194,7 +207,7 @@ function displayValue(value: unknown): string {
   return String(value);
 }
 
-function renderAsciiTable(columns: TableColumn[], rows: string[][]): string {
+export function renderAsciiTable(columns: TableColumn[], rows: string[][]): string {
   const widths = columns.map((column, index) => {
     const contentWidths = rows.map((row) => row[index]?.length ?? 0);
     const widestContent = Math.max(column.header.length, ...contentWidths);
@@ -231,11 +244,17 @@ function renderTwoColumnTable(title: string, rows: Array<[string, string]>, widt
   )}\n`;
 }
 
-function writeConfigFileSafely(options: {
+export function writeConfigFileSafely(options: {
   filePath: string;
   body: string;
   overwrite: boolean;
+  fsOps?: Partial<SafeWriteFsOps>;
 }): { ok: true } | { ok: false; message: string } {
+  const fsOps: SafeWriteFsOps = {
+    openSync: options.fsOps?.openSync ?? openSync,
+    writeFileSync: options.fsOps?.writeFileSync ?? writeFileSync,
+    closeSync: options.fsOps?.closeSync ?? closeSync
+  };
   const baseFlags = fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW;
   const flags = options.overwrite
     ? baseFlags | fsConstants.O_TRUNC
@@ -243,8 +262,8 @@ function writeConfigFileSafely(options: {
 
   let fd: number | undefined;
   try {
-    fd = openSync(options.filePath, flags, 0o600);
-    writeFileSync(fd, options.body, { encoding: "utf8" });
+    fd = fsOps.openSync(options.filePath, flags, 0o600);
+    fsOps.writeFileSync(fd, options.body, { encoding: "utf8" });
     return { ok: true };
   } catch (error: unknown) {
     const code = (error as NodeJS.ErrnoException)?.code;
@@ -261,7 +280,7 @@ function writeConfigFileSafely(options: {
   } finally {
     if (typeof fd === "number") {
       try {
-        closeSync(fd);
+        fsOps.closeSync(fd);
       } catch {
         // Best effort close.
       }
@@ -289,6 +308,111 @@ function redactedSummary(value: string): string {
   const prefix = value.slice(0, 2);
   const suffix = value.slice(-2);
   return `len=${length} mask=${prefix}***${suffix} sha256=${digest.slice(0, 12)}`;
+}
+
+export function buildRowsForNoRequestedRefs(sanitizedIds: string[], unresolvedReasons: Map<string, string>): ResolveRow[] {
+  return sanitizedIds.map((id) => ({
+    id,
+    status: "unresolved",
+    output: unresolvedReasons.get(id) === "policy-blocked" || unresolvedReasons.get(id) === "invalid-ref" ? "filtered" : "missing",
+    reason: unresolvedReasons.get(id) ?? "sdk-unresolved"
+  }));
+}
+
+export function buildRowsForResolvedRefs(options: {
+  sanitizedIds: string[];
+  unresolvedReasons: Map<string, string>;
+  requestedRefs: string[];
+  refToId: Map<string, string>;
+  resolved: Map<string, string>;
+  reveal: boolean;
+}): ResolveRow[] {
+  return options.sanitizedIds.map((id) => {
+    if (options.unresolvedReasons.has(id)) {
+      return {
+        id,
+        status: "unresolved",
+        output: "filtered",
+        reason: options.unresolvedReasons.get(id) ?? "filtered"
+      };
+    }
+
+    const ref = options.requestedRefs.find((candidateRef) => options.refToId.get(candidateRef) === id);
+    if (!ref) {
+      return {
+        id,
+        status: "unresolved",
+        output: "filtered",
+        reason: "internal-mapping-miss"
+      };
+    }
+
+    const value = options.resolved.get(ref);
+    if (typeof value !== "string") {
+      options.unresolvedReasons.set(id, "sdk-unresolved");
+      return {
+        id,
+        status: "unresolved",
+        output: "missing",
+        reason: "sdk-unresolved"
+      };
+    }
+
+    return {
+      id,
+      status: "resolved",
+      output: options.reveal ? value : redactedSummary(value),
+      reason: "resolved"
+    };
+  });
+}
+
+export function toResolveJsonPayload(rows: ResolveRow[], options: { debug: boolean; reveal: boolean }): {
+  debug: boolean;
+  reveal: boolean;
+  results: Array<{ id: string; status: string; output: string; reason?: string }>;
+} {
+  return {
+    debug: options.debug,
+    reveal: options.reveal,
+    results: rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      output: row.output,
+      ...(options.debug ? { reason: row.reason } : {})
+    }))
+  };
+}
+
+export function renderResolveTable(rows: ResolveRow[], debug: boolean): string {
+  return renderAsciiTable(
+    debug
+      ? [
+          { header: "ID", maxWidth: 56 },
+          { header: "Status", maxWidth: 12 },
+          { header: "Output", maxWidth: 96 },
+          { header: "Reason", maxWidth: 24 }
+        ]
+      : [
+          { header: "ID", maxWidth: 56 },
+          { header: "Status", maxWidth: 12 },
+          { header: "Output", maxWidth: 96 }
+        ],
+    debug ? rows.map((row) => [row.id, row.status, row.output, row.reason]) : rows.map((row) => [row.id, row.status, row.output])
+  );
+}
+
+function printResolveResults(
+  streams: CliStreams,
+  options: { rows: ResolveRow[]; debug: boolean; reveal: boolean; asJson: boolean }
+): void {
+  if (options.asJson) {
+    printJson(streams.stdout, toResolveJsonPayload(options.rows, { debug: options.debug, reveal: options.reveal }));
+    return;
+  }
+
+  streams.stdout.write("RESOLVE RESULTS\n");
+  streams.stdout.write(`${renderResolveTable(options.rows, options.debug)}\n`);
 }
 
 async function readStdinLines(stream: NodeJS.ReadableStream): Promise<string[]> {
@@ -838,46 +962,8 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
   }
 
   if (requestedRefs.length === 0) {
-    const rows = sanitizedIds.map((id) => ({
-      id,
-      status: "unresolved",
-      output: unresolvedReasons.get(id) === "policy-blocked" || unresolvedReasons.get(id) === "invalid-ref" ? "filtered" : "missing",
-      reason: unresolvedReasons.get(id) ?? "sdk-unresolved"
-    }));
-
-    if (asJson) {
-      printJson(streams.stdout, {
-        debug,
-        reveal,
-        results: rows.map((row) => ({
-          id: row.id,
-          status: row.status,
-          output: row.output,
-          ...(debug ? { reason: row.reason } : {})
-        }))
-      });
-    } else {
-      streams.stdout.write("RESOLVE RESULTS\n");
-      streams.stdout.write(
-        `${renderAsciiTable(
-          debug
-            ? [
-                { header: "ID", maxWidth: 56 },
-                { header: "Status", maxWidth: 12 },
-                { header: "Output", maxWidth: 96 },
-                { header: "Reason", maxWidth: 24 }
-              ]
-            : [
-                { header: "ID", maxWidth: 56 },
-                { header: "Status", maxWidth: 12 },
-                { header: "Output", maxWidth: 96 }
-              ],
-          debug
-            ? rows.map((row) => [row.id, row.status, row.output, row.reason])
-            : rows.map((row) => [row.id, row.status, row.output])
-        )}\n`
-      );
-    }
+    const rows = buildRowsForNoRequestedRefs(sanitizedIds, unresolvedReasons);
+    printResolveResults(streams, { rows, debug, reveal, asJson });
 
     return { code: 1 };
   }
@@ -897,78 +983,15 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
       effective.config.concurrency
     );
 
-    const rows = sanitizedIds.map((id) => {
-      if (unresolvedReasons.has(id)) {
-        return {
-          id,
-          status: "unresolved",
-          output: "filtered",
-          reason: unresolvedReasons.get(id) ?? "filtered"
-        };
-      }
-
-      const ref = requestedRefs.find((candidateRef) => refToId.get(candidateRef) === id);
-      if (!ref) {
-        return {
-          id,
-          status: "unresolved",
-          output: "filtered",
-          reason: "internal-mapping-miss"
-        };
-      }
-
-      const value = resolved.get(ref);
-      if (typeof value !== "string") {
-        unresolvedReasons.set(id, "sdk-unresolved");
-        return {
-          id,
-          status: "unresolved",
-          output: "missing",
-          reason: "sdk-unresolved"
-        };
-      }
-
-      return {
-        id,
-        status: "resolved",
-        output: reveal ? value : redactedSummary(value),
-        reason: "resolved"
-      };
+    const rows = buildRowsForResolvedRefs({
+      sanitizedIds,
+      unresolvedReasons,
+      requestedRefs,
+      refToId,
+      resolved,
+      reveal
     });
-
-    if (asJson) {
-      printJson(streams.stdout, {
-        debug,
-        reveal,
-        results: rows.map((row) => ({
-          id: row.id,
-          status: row.status,
-          output: row.output,
-          ...(debug ? { reason: row.reason } : {})
-        }))
-      });
-    } else {
-      streams.stdout.write("RESOLVE RESULTS\n");
-      streams.stdout.write(
-        `${renderAsciiTable(
-          debug
-            ? [
-                { header: "ID", maxWidth: 56 },
-                { header: "Status", maxWidth: 12 },
-                { header: "Output", maxWidth: 96 },
-                { header: "Reason", maxWidth: 24 }
-              ]
-            : [
-                { header: "ID", maxWidth: 56 },
-                { header: "Status", maxWidth: 12 },
-                { header: "Output", maxWidth: 96 }
-              ],
-          debug
-            ? rows.map((row) => [row.id, row.status, row.output, row.reason])
-            : rows.map((row) => [row.id, row.status, row.output])
-        )}\n`
-      );
-    }
+    printResolveResults(streams, { rows, debug, reveal, asJson });
 
     return {
       code: rows.every((row) => row.status === "resolved") ? 0 : 1

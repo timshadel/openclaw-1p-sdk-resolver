@@ -19,6 +19,52 @@ export type ResolverRuntime = {
   resolver?: SecretResolver;
 };
 
+export function buildRequestedRefs(options: {
+  ids: string[];
+  defaultVault: string;
+  vaultPolicy: "default_vault" | "default_vault+whitelist" | "any";
+  vaultWhitelist: string[];
+}): { refs: string[]; refToId: Map<string, string> } {
+  const refToId = new Map<string, string>();
+  const refs: string[] = [];
+
+  for (const id of options.ids) {
+    const ref = mapIdToReference(id, options.defaultVault);
+    if (!isValidSecretReference(ref)) {
+      continue;
+    }
+    const vault = extractVaultFromReference(ref);
+    if (!vault) {
+      continue;
+    }
+    if (
+      !isVaultAllowed({
+        vault,
+        defaultVault: options.defaultVault,
+        vaultPolicy: options.vaultPolicy,
+        vaultWhitelist: options.vaultWhitelist
+      })
+    ) {
+      continue;
+    }
+    refToId.set(ref, id);
+    refs.push(ref);
+  }
+
+  return { refs, refToId };
+}
+
+export function mapResolvedValuesToIds(resolved: Map<string, string>, refToId: Map<string, string>): Record<string, string> {
+  const values = Object.create(null) as Record<string, string>;
+  for (const [ref, value] of resolved.entries()) {
+    const id = refToId.get(ref);
+    if (id && typeof value === "string") {
+      values[id] = value;
+    }
+  }
+  return values;
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
@@ -140,31 +186,12 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
     return;
   }
 
-  const refToId = new Map<string, string>();
-  const refs: string[] = [];
-  // Keep a reverse index so output keys remain original requested IDs.
-  for (const id of ids) {
-    const ref = mapIdToReference(id, config.defaultVault);
-    if (!isValidSecretReference(ref)) {
-      continue;
-    }
-    const vault = extractVaultFromReference(ref);
-    if (!vault) {
-      continue;
-    }
-    if (
-      !isVaultAllowed({
-        vault,
-        defaultVault: config.defaultVault,
-        vaultPolicy: config.vaultPolicy,
-        vaultWhitelist: config.vaultWhitelist
-      })
-    ) {
-      continue;
-    }
-    refToId.set(ref, id);
-    refs.push(ref);
-  }
+  const { refs, refToId } = buildRequestedRefs({
+    ids,
+    defaultVault: config.defaultVault,
+    vaultPolicy: config.vaultPolicy,
+    vaultWhitelist: config.vaultWhitelist
+  });
 
   if (refs.length === 0) {
     await writeResponse(stdout, emptyResponse(protocolVersion));
@@ -185,13 +212,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
       config.timeoutMs
     );
 
-    const values = Object.create(null) as Record<string, string>;
-    for (const [ref, value] of resolved.entries()) {
-      const id = refToId.get(ref);
-      if (id && typeof value === "string") {
-        values[id] = value;
-      }
-    }
+    const values = mapResolvedValuesToIds(resolved, refToId);
 
     await writeResponse(stdout, {
       protocolVersion,
@@ -211,13 +232,23 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   process.exitCode = exitCode;
 }
 
+export async function runMain(options: {
+  run?: (argv?: string[]) => Promise<void>;
+  argv?: string[];
+  processLike?: { exitCode?: number };
+} = {}): Promise<void> {
+  const run = options.run ?? runCli;
+  const argv = options.argv ?? process.argv.slice(2);
+  const processLike = options.processLike ?? process;
+
+  try {
+    await run(argv);
+    // runCli is responsible for setting successful/expected exit codes.
+  } catch {
+    processLike.exitCode = 3;
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runCli().then(
-    () => {
-      // runCli sets process.exitCode.
-    },
-    () => {
-      process.exitCode = 3;
-    }
-  );
+  void runMain();
 }
