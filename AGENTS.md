@@ -119,6 +119,27 @@ Include “partial success” tests where only some ids resolve.
   - How it was tested (`pnpm test`)
   - Security impact notes (if any)
 
+## Plan-First Requirement
+
+For any major change, or any change that affects public API/CLI/user interface behavior, contributors and agents must:
+
+1) Create or update a formal plan under `docs/plans/`.
+2) Align on the plan before making implementation edits.
+3) Link the plan record in PR notes and/or commit context.
+
+Major/public changes include:
+
+- New/removed/renamed commands, flags, environment variables, or config keys.
+- Output schema changes or exit-code behavior changes.
+- User-visible behavior changes in command output or interaction flow.
+- Protocol-path changes or cross-module refactors that can affect integrations.
+
+Exceptions (plan not required):
+
+- Typo-only documentation fixes.
+- Comment-only cleanup.
+- Tests that do not change behavior contracts.
+
 Agents in forks:
 - Do not add new runtime dependencies without justification.
 - Pin deps via lockfile.

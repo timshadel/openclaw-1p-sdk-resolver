@@ -12,6 +12,11 @@ Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that reso
 - Strict caps for `stdin` size, id count, timeout, and concurrency.
 - No secret logging in CLI mode; `resolve` output is redacted by default.
 
+## Formal Plans
+
+This repository tracks substantial implementation plans in [`docs/plans/README.md`](./docs/plans/README.md).
+Use that convention for major/public-facing changes before implementation.
+
 ## Protocol
 
 Input:
