@@ -5,7 +5,7 @@ import { stdin as processStdin, stdout as processStdout, stderr as processStderr
 import readline from "node:readline/promises";
 import { EXIT_POLICY } from "./exit-policy.js";
 import { createOnePasswordResolver, isValidSecretReference } from "./onepassword.js";
-import { buildResolverProviderSnippet, checkOpenclawProviderSetup, parseOpenclawConfigText, resolveOpenclawConfigPath } from "./openclaw.js";
+import { buildResolverProviderSnippet, DEFAULT_OPENCLAW_PROVIDER_ALIAS, checkOpenclawProviderSetup, parseOpenclawConfigText, resolveOpenclawConfigPath } from "./openclaw.js";
 import { loadEffectiveConfig } from "./protocol.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 function normalizeStreams(runtime) {
@@ -126,9 +126,10 @@ function printUsage(stream) {
     stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver 1password check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver 1password diagnose [--json] [--probe-id <id>] [--debug]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver 1password snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver 1p <check|diagnose|snippet> [...flags]  # shorthand alias\n`);
     stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`);
 }
 export function truncateCell(value, maxWidth) {
@@ -681,7 +682,7 @@ function runConfigInit(args, context) {
 function runOpenclawSnippet(args, context) {
     const { streams, entryScriptPath } = context;
     const { flags } = parseFlags(args);
-    const providerAlias = getStringFlag(flags, "provider") ?? "onepassword";
+    const providerAlias = getStringFlag(flags, "provider") ?? DEFAULT_OPENCLAW_PROVIDER_ALIAS;
     const commandOverride = getStringFlag(flags, "command");
     const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
     const commandHint = commandOverride ??
@@ -760,7 +761,7 @@ async function analyzeOpenclawSetup(args, context, runtime) {
         catch {
             sdkStatus = "error";
             issues.push({
-                code: "onepassword_sdk_init_failed",
+                code: "one_password_sdk_init_failed",
                 message: "Unable to initialize 1Password SDK client."
             });
         }
@@ -951,7 +952,7 @@ async function analyzeOnePasswordSetup(args, context, runtime) {
         catch {
             sdkStatus = "error";
             issues.push({
-                code: "onepassword_sdk_init_failed",
+                code: "one_password_sdk_init_failed",
                 message: "Unable to initialize 1Password SDK client.",
                 level: "error"
             });
@@ -1090,7 +1091,7 @@ async function runOnepasswordCheck(args, context, runtime) {
         printJson(streams.stdout, analysis.payload);
     }
     else {
-        streams.stdout.write("ONEPASSWORD CHECK\n\n");
+        streams.stdout.write("1PASSWORD CHECK\n\n");
         streams.stdout.write("SUMMARY\n");
         streams.stdout.write(`- status: ${analysis.payload.status}\n`);
         streams.stdout.write(`- config valid: ${analysis.payload.config.valid ? "yes" : "no"}\n`);
@@ -1152,7 +1153,7 @@ async function runOnepasswordDiagnose(args, context, runtime) {
         printJson(streams.stdout, payload);
     }
     else {
-        streams.stdout.write("ONEPASSWORD DIAGNOSE\n\n");
+        streams.stdout.write("1PASSWORD DIAGNOSE\n\n");
         streams.stdout.write("SUMMARY\n");
         streams.stdout.write(`- status: ${payload.status}\n`);
         streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.tokenPresent ? "yes" : "no"}\n`);
@@ -1342,7 +1343,7 @@ export async function runCli(argv, runtime) {
         streams.stderr.write("Unknown openclaw subcommand. Use: check | snippet | diagnose\n");
         return EXIT_POLICY.ERROR;
     }
-    if (command === "onepassword") {
+    if (command === "1password" || command === "1p") {
         const subcommand = argv[1];
         if (subcommand === "check") {
             return (await runOnepasswordCheck(argv.slice(2), context, runtime)).code;
@@ -1353,7 +1354,7 @@ export async function runCli(argv, runtime) {
         if (subcommand === "snippet") {
             return runOnepasswordSnippet(argv.slice(2), context).code;
         }
-        streams.stderr.write("Unknown onepassword subcommand. Use: check | diagnose | snippet\n");
+        streams.stderr.write("Unknown 1password subcommand. Use: check | diagnose | snippet\n");
         return EXIT_POLICY.ERROR;
     }
     if (command === "resolve") {

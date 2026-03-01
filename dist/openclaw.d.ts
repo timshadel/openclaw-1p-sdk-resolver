@@ -17,6 +17,7 @@ export type OpenclawProviderCheckResult = {
     findings: OpenclawProviderFinding[];
     suggestions: string[];
 };
+export declare const DEFAULT_OPENCLAW_PROVIDER_ALIAS = "1p-sdk-resolver";
 export declare function resolveOpenclawConfigPath(options: {
     env: NodeJS.ProcessEnv;
     explicitPath?: string;

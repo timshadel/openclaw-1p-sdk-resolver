@@ -1,6 +1,7 @@
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+export const DEFAULT_OPENCLAW_PROVIDER_ALIAS = "1p-sdk-resolver";
 export function resolveOpenclawConfigPath(options) {
     const explicitPath = options.explicitPath?.trim();
     if (explicitPath) {
@@ -90,7 +91,7 @@ export function parseOpenclawConfigText(text) {
     }
 }
 export function buildResolverProviderSnippet(options) {
-    const providerAlias = options.providerAlias?.trim() || "onepassword";
+    const providerAlias = options.providerAlias?.trim() || DEFAULT_OPENCLAW_PROVIDER_ALIAS;
     return {
         providers: [
             {
@@ -109,7 +110,7 @@ export function buildResolverProviderSnippet(options) {
 export function checkOpenclawProviderSetup(options) {
     const findings = [];
     const suggestions = [];
-    const providerAlias = options.providerAlias?.trim() || "onepassword";
+    const providerAlias = options.providerAlias?.trim() || DEFAULT_OPENCLAW_PROVIDER_ALIAS;
     const root = options.parsedConfig;
     if (!root || typeof root !== "object") {
         return {
