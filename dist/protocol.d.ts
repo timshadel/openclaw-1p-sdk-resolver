@@ -28,8 +28,8 @@ export type RuntimeConfig = {
     timeoutMs: number;
     stdinTimeoutMs: number;
     concurrency: number;
-    integrationName: string;
-    integrationVersion: string;
+    onePasswordClientName: string;
+    onePasswordClientVersion: string;
 };
 export type ConfigValueSource = "default" | "config-file" | "env";
 export type ConfigPathSource = "OP_RESOLVER_CONFIG" | "XDG_CONFIG_HOME" | "HOME" | "unresolved";

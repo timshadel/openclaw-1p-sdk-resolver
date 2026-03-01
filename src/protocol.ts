@@ -34,8 +34,8 @@ type FileConfig = {
   timeoutMs?: unknown;
   stdinTimeoutMs?: unknown;
   concurrency?: unknown;
-  integrationName?: unknown;
-  integrationVersion?: unknown;
+  onePasswordClientName?: unknown;
+  onePasswordClientVersion?: unknown;
 };
 
 const DEFAULTS = {
@@ -46,8 +46,8 @@ const DEFAULTS = {
   timeoutMs: 25_000,
   stdinTimeoutMs: 5_000,
   concurrency: 4,
-  integrationName: "openclaw-1p-sdk-resolver",
-  integrationVersion: "1.0.0"
+  onePasswordClientName: "openclaw-1p-sdk-resolver",
+  onePasswordClientVersion: "1.0.0"
 } as const;
 
 const CAPS = {
@@ -66,8 +66,8 @@ export type RuntimeConfig = {
   timeoutMs: number;
   stdinTimeoutMs: number;
   concurrency: number;
-  integrationName: string;
-  integrationVersion: string;
+  onePasswordClientName: string;
+  onePasswordClientVersion: string;
 };
 
 export type ConfigValueSource = "default" | "config-file" | "env";
@@ -152,8 +152,8 @@ function createDefaultConfig(): RuntimeConfig {
     timeoutMs: DEFAULTS.timeoutMs,
     stdinTimeoutMs: DEFAULTS.stdinTimeoutMs,
     concurrency: DEFAULTS.concurrency,
-    integrationName: DEFAULTS.integrationName,
-    integrationVersion: DEFAULTS.integrationVersion
+    onePasswordClientName: DEFAULTS.onePasswordClientName,
+    onePasswordClientVersion: DEFAULTS.onePasswordClientVersion
   };
 }
 
@@ -517,7 +517,7 @@ export function loadEffectiveConfig(options: {
   }
 
   function readStringSetting(
-    key: keyof Pick<RuntimeConfig, "integrationName" | "integrationVersion">,
+    key: keyof Pick<RuntimeConfig, "onePasswordClientName" | "onePasswordClientVersion">,
     raw: unknown,
     fallback: string
   ): ConfigProvenanceEntry<string> {
@@ -549,15 +549,16 @@ export function loadEffectiveConfig(options: {
     };
   }
 
-  const integrationNameEntry = readStringSetting(
-    "integrationName",
-    fileConfig.integrationName,
-    defaults.integrationName
+  const onePasswordClientNameEntry = readStringSetting(
+    "onePasswordClientName",
+    fileConfig.onePasswordClientName,
+    defaults.onePasswordClientName
   );
-  const integrationVersionEntry = readStringSetting(
-    "integrationVersion",
-    fileConfig.integrationVersion,
-    defaults.integrationVersion
+
+  const onePasswordClientVersionEntry = readStringSetting(
+    "onePasswordClientVersion",
+    fileConfig.onePasswordClientVersion,
+    defaults.onePasswordClientVersion
   );
 
   const config: RuntimeConfig = {
@@ -570,8 +571,8 @@ export function loadEffectiveConfig(options: {
     timeoutMs: timeoutMsEntry.value,
     stdinTimeoutMs: stdinTimeoutMsEntry.value,
     concurrency: concurrencyEntry.value,
-    integrationName: integrationNameEntry.value,
-    integrationVersion: integrationVersionEntry.value
+    onePasswordClientName: onePasswordClientNameEntry.value,
+    onePasswordClientVersion: onePasswordClientVersionEntry.value
   };
 
   const provenance: ConfigProvenance = {
@@ -584,8 +585,8 @@ export function loadEffectiveConfig(options: {
     timeoutMs: timeoutMsEntry,
     stdinTimeoutMs: stdinTimeoutMsEntry,
     concurrency: concurrencyEntry,
-    integrationName: integrationNameEntry,
-    integrationVersion: integrationVersionEntry
+    onePasswordClientName: onePasswordClientNameEntry,
+    onePasswordClientVersion: onePasswordClientVersionEntry
   };
 
   return {

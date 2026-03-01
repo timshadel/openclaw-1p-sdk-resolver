@@ -169,6 +169,42 @@ describe("protocol", () => {
     expect(config.vaultWhitelist).toEqual([]);
   });
 
+  it("supports explicit onePassword client metadata keys", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        onePasswordClientName: "custom-client",
+        onePasswordClientVersion: "9.9.9"
+      }),
+      "utf8"
+    );
+
+    const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
+    expect(config.onePasswordClientName).toBe("custom-client");
+    expect(config.onePasswordClientVersion).toBe("9.9.9");
+  });
+
+  it("ignores removed integration metadata keys", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        integrationName: "legacy-client",
+        integrationVersion: "2.0.0"
+      }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.config.onePasswordClientName).toBe("openclaw-1p-sdk-resolver");
+    expect(effective.config.onePasswordClientVersion).toBe("1.0.0");
+    expect(effective.provenance.onePasswordClientName.source).toBe("default");
+    expect(effective.provenance.onePasswordClientVersion.source).toBe("default");
+  });
+
   it("fuzzes parser with random utf8 payloads without throwing", () => {
     let seed = 1337;
     const next = (): number => {

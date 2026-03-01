@@ -110,13 +110,13 @@ async function resolveWithConcurrency(
 
 export async function createOnePasswordResolver(options: {
   auth: string;
-  integrationName: string;
-  integrationVersion: string;
+  clientName: string;
+  clientVersion: string;
 }): Promise<SecretResolver> {
   const client = await createClient({
     auth: options.auth,
-    integrationName: options.integrationName,
-    integrationVersion: options.integrationVersion
+    integrationName: options.clientName,
+    integrationVersion: options.clientVersion
   });
 
   const secrets = (client as { secrets?: MaybeSecretsApi }).secrets;

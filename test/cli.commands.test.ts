@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough, Readable } from "node:stream";
@@ -182,6 +182,7 @@ describe("command cli", () => {
     expect(streams.out.stdout).toContain("OPENCLAW PROVIDER SNIPPET");
     expect(streams.out.stdout).toContain("| Field");
     expect(streams.out.stdout).toContain("| Command");
+    expect(streams.out.stdout).toContain("/absolute/path/to/openclaw-1p-sdk-resolver");
     expect(streams.out.stdout.includes("\t")).toBe(false);
   });
 
@@ -286,5 +287,28 @@ describe("command cli", () => {
     expect(streams.out.stdout).toContain("| Status");
     expect(streams.out.stdout).toContain("| Output");
     expect(streams.out.stdout.includes("\t")).toBe(false);
+  });
+
+  it("config init --write refuses to overwrite symlink paths", async () => {
+    const home = path.join(tmpdir(), `onep-cli-symlink-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const configDir = path.join(home, ".config", "openclaw-1p-sdk-resolver");
+    mkdirSync(configDir, { recursive: true });
+
+    const realTargetPath = path.join(home, "real-target.json");
+    writeFileSync(realTargetPath, "{\"do_not\":\"overwrite\"}\n", "utf8");
+
+    const configPath = path.join(configDir, "config.json");
+    symlinkSync(realTargetPath, configPath);
+
+    const streams = createStreams();
+    const code = await runCli(["config", "init", "--write", "--force"], {
+      env: { HOME: home },
+      streams,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(2);
+    expect(streams.out.stderr).toContain("Refusing to write config to a symbolic link path.");
+    expect(readFileSync(realTargetPath, "utf8")).toContain("\"do_not\":\"overwrite\"");
   });
 });

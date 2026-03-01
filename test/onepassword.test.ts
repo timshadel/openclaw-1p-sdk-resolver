@@ -25,8 +25,8 @@ describe("onepassword adapter", () => {
     await expect(
       createOnePasswordResolver({
         auth: "token",
-        integrationName: "test",
-        integrationVersion: "1.0.0"
+        clientName: "test",
+        clientVersion: "1.0.0"
       })
     ).rejects.toThrow("auth-failed");
   });
@@ -37,8 +37,8 @@ describe("onepassword adapter", () => {
     await expect(
       createOnePasswordResolver({
         auth: "token",
-        integrationName: "test",
-        integrationVersion: "1.0.0"
+        clientName: "test",
+        clientVersion: "1.0.0"
       })
     ).rejects.toThrow("1password-secrets-api-missing");
   });
@@ -51,8 +51,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const result = await adapter.resolveRefs([], 1000, 4);
 
@@ -69,8 +69,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = ["op://Main/item/field"];
     const result = await adapter.resolveRefs(refs, 1000, 4);
@@ -92,8 +92,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = ["op://Main/item/a", "op://Main/item/b"];
 
@@ -119,8 +119,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = ["op://Main/item/a", "op://Main/item/b"];
     const result = await adapter.resolveRefs(refs, 1000, 2);
@@ -136,8 +136,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const result = await adapter.resolveRefs(["op://Main/item/field"], 1000, 2);
 
@@ -157,8 +157,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = ["op://Main/item/good", "op://Main/item/bad"];
     const result = await adapter.resolveRefs(refs, 1000, 2);
@@ -183,8 +183,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = Array.from({ length: 8 }, (_, i) => `op://Main/item/${i}`);
     const result = await adapter.resolveRefs(refs, 1000, 3);
@@ -207,8 +207,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const result = await adapter.resolveRefs(["op://Main/item/field"], 1000, 1);
 
@@ -235,8 +235,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const refs = ["op://Main/item/a", "op://Main/item/b"];
     const result = await adapter.resolveRefs(refs, 1000, 2);
@@ -257,8 +257,8 @@ describe("onepassword adapter", () => {
 
     const adapter = await createOnePasswordResolver({
       auth: "token",
-      integrationName: "test",
-      integrationVersion: "1.0.0"
+      clientName: "test",
+      clientVersion: "1.0.0"
     });
     const result = await adapter.resolveRefs(["op://Main/item/field"], 25, 1);
 

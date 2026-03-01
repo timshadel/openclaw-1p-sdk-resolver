@@ -133,8 +133,8 @@ export async function runResolver(runtime = {}) {
         const resolver = runtime.resolver ??
             (await createOnePasswordResolver({
                 auth: token,
-                integrationName: config.integrationName,
-                integrationVersion: config.integrationVersion
+                clientName: config.onePasswordClientName,
+                clientVersion: config.onePasswordClientVersion
             }));
         const resolved = await withTimeout(resolver.resolveRefs(refs, config.timeoutMs, config.concurrency), config.timeoutMs);
         const values = Object.create(null);

@@ -11,7 +11,7 @@ export type SecretResolver = {
 export declare function isValidSecretReference(secretReference: string): boolean;
 export declare function createOnePasswordResolver(options: {
     auth: string;
-    integrationName: string;
-    integrationVersion: string;
+    clientName: string;
+    clientVersion: string;
 }): Promise<SecretResolver>;
 //# sourceMappingURL=onepassword.d.ts.map

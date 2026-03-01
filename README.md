@@ -59,8 +59,8 @@ Example config JSON:
   "stdinTimeoutMs": 5000,
   "timeoutMs": 25000,
   "concurrency": 4,
-  "integrationName": "openclaw-1p-sdk-resolver",
-  "integrationVersion": "1.0.0"
+  "onePasswordClientName": "openclaw-1p-sdk-resolver",
+  "onePasswordClientVersion": "1.0.0"
 }
 ```
 
@@ -71,8 +71,8 @@ Defaults/caps:
 - `timeoutMs`: default `25000`
 - `stdinTimeoutMs`: default `5000`
 - `concurrency`: default `4`, hard cap `10`
-- `integrationName`: default `openclaw-1p-sdk-resolver`
-- `integrationVersion`: default `1.0.0`
+- `onePasswordClientName`: default `openclaw-1p-sdk-resolver` (used as 1Password SDK client metadata)
+- `onePasswordClientVersion`: default `1.0.0` (used as 1Password SDK client metadata)
 - `defaultVault`: default `"default"` (also supports legacy `vault` key)
 - `vaultPolicy`: default `"default_vault"`
   - `"default_vault"`: only configured `defaultVault` allowed for explicit `op://...` refs
@@ -86,6 +86,10 @@ Vault source precedence:
 - fallback to legacy `vault` config key
 - fallback to built-in default `"default"`
 
+Removed keys:
+
+- `integrationName` and `integrationVersion` are no longer recognized.
+
 ## CLI Commands
 
 No args means resolver mode. Any recognized subcommand runs CLI mode and does not read protocol stdin.
@@ -93,7 +97,7 @@ No args means resolver mode. Any recognized subcommand runs CLI mode and does no
 ```bash
 openclaw-1p-sdk-resolver doctor [--json]
 openclaw-1p-sdk-resolver config path [--json]
-openclaw-1p-sdk-resolver config show [--defaults] [--current-file] [--verbose]
+openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]
 openclaw-1p-sdk-resolver config init [--write] [--force] [--json]
 openclaw-1p-sdk-resolver openclaw snippet [--json]
 openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--reveal --yes]

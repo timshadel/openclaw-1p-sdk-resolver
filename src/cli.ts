@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
-import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { stdin as processStdin, stdout as processStdout, stderr as processStderr } from "node:process";
 import readline from "node:readline/promises";
@@ -132,7 +143,7 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver                    # resolver mode (stdin protocol)\n`);
   stream.write(`  openclaw-1p-sdk-resolver doctor [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config path [--json]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver config show [--defaults] [--current-file] [--verbose]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config init [--write] [--force] [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--reveal --yes]\n`);
@@ -206,6 +217,44 @@ function renderTwoColumnTable(title: string, rows: Array<[string, string]>, widt
   )}\n`;
 }
 
+function writeConfigFileSafely(options: {
+  filePath: string;
+  body: string;
+  overwrite: boolean;
+}): { ok: true } | { ok: false; message: string } {
+  const baseFlags = fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW;
+  const flags = options.overwrite
+    ? baseFlags | fsConstants.O_TRUNC
+    : baseFlags | fsConstants.O_CREAT | fsConstants.O_EXCL;
+
+  let fd: number | undefined;
+  try {
+    fd = openSync(options.filePath, flags, 0o600);
+    writeFileSync(fd, options.body, { encoding: "utf8" });
+    return { ok: true };
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ELOOP") {
+      return { ok: false, message: "Refusing to write config to a symbolic link path." };
+    }
+    if (code === "EEXIST") {
+      return { ok: false, message: "Config file already exists. Use --force to overwrite." };
+    }
+    if (code === "EINVAL" || code === "ENOTSUP") {
+      return { ok: false, message: "Safe no-follow file writes are not supported on this platform." };
+    }
+    return { ok: false, message: "Unable to write config file safely." };
+  } finally {
+    if (typeof fd === "number") {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best effort close.
+      }
+    }
+  }
+}
+
 function summarizeIssues(issues: ConfigIssue[]): { ok: boolean; warnings: number; errors: number } {
   const warnings = issues.filter((issue) => issue.level === "warning").length;
   const errors = issues.filter((issue) => issue.level === "error").length;
@@ -273,8 +322,8 @@ async function runDoctor(args: string[], runtime: CliRuntime): Promise<ExitResul
       const createResolver = runtime.createResolver ?? createOnePasswordResolver;
       await createResolver({
         auth: env.OP_SERVICE_ACCOUNT_TOKEN?.trim() ?? "",
-        integrationName: effective.config.integrationName,
-        integrationVersion: effective.config.integrationVersion
+        clientName: effective.config.onePasswordClientName,
+        clientVersion: effective.config.onePasswordClientVersion
       });
       sdkStatus = "ok";
     } catch {
@@ -602,9 +651,29 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
     return { code: 2 };
   }
 
+  if (fileExists) {
+    try {
+      if (lstatSync(effective.path.path).isSymbolicLink()) {
+        streams.stderr.write("Refusing to write config to a symbolic link path.\n");
+        return { code: 2 };
+      }
+    } catch {
+      streams.stderr.write("Unable to stat existing config path.\n");
+      return { code: 2 };
+    }
+  }
+
   const dir = path.dirname(effective.path.path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(effective.path.path, body, { encoding: "utf8", mode: 0o600 });
+  const writeResult = writeConfigFileSafely({
+    filePath: effective.path.path,
+    body,
+    overwrite: fileExists
+  });
+  if (!writeResult.ok) {
+    streams.stderr.write(`${writeResult.message}\n`);
+    return { code: 2 };
+  }
   try {
     chmodSync(effective.path.path, 0o600);
   } catch {
@@ -627,11 +696,11 @@ function runOpenclawSnippet(args: string[], runtime: CliRuntime): ExitResult {
   const { flags } = parseFlags(args);
   const asJson = hasFlag(flags, "json");
 
-  const commandHint = process.argv[1]
-    ? path.resolve(process.argv[1]).includes("openclaw-1p-sdk-resolver")
-      ? path.resolve(process.argv[1])
-      : "/absolute/path/to/openclaw-1p-sdk-resolver"
-    : "/absolute/path/to/openclaw-1p-sdk-resolver";
+  const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  const commandHint =
+    path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
+      ? invokedPath
+      : "/absolute/path/to/openclaw-1p-sdk-resolver";
 
   const snippet = {
     providers: [
@@ -748,8 +817,8 @@ async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResu
       runtime.resolver ??
       (await (runtime.createResolver ?? createOnePasswordResolver)({
         auth: env.OP_SERVICE_ACCOUNT_TOKEN.trim(),
-        integrationName: effective.config.integrationName,
-        integrationVersion: effective.config.integrationVersion
+        clientName: effective.config.onePasswordClientName,
+        clientVersion: effective.config.onePasswordClientVersion
       }));
 
     const resolved = await resolver.resolveRefs(

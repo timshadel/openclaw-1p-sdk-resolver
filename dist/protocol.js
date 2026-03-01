@@ -8,8 +8,8 @@ const DEFAULTS = {
     timeoutMs: 25_000,
     stdinTimeoutMs: 5_000,
     concurrency: 4,
-    integrationName: "openclaw-1p-sdk-resolver",
-    integrationVersion: "1.0.0"
+    onePasswordClientName: "openclaw-1p-sdk-resolver",
+    onePasswordClientVersion: "1.0.0"
 };
 const CAPS = {
     maxIds: 200,
@@ -42,8 +42,8 @@ function createDefaultConfig() {
         timeoutMs: DEFAULTS.timeoutMs,
         stdinTimeoutMs: DEFAULTS.stdinTimeoutMs,
         concurrency: DEFAULTS.concurrency,
-        integrationName: DEFAULTS.integrationName,
-        integrationVersion: DEFAULTS.integrationVersion
+        onePasswordClientName: DEFAULTS.onePasswordClientName,
+        onePasswordClientVersion: DEFAULTS.onePasswordClientVersion
     };
 }
 export function resolveConfigPath(env) {
@@ -402,8 +402,8 @@ export function loadEffectiveConfig(options) {
             notes: []
         };
     }
-    const integrationNameEntry = readStringSetting("integrationName", fileConfig.integrationName, defaults.integrationName);
-    const integrationVersionEntry = readStringSetting("integrationVersion", fileConfig.integrationVersion, defaults.integrationVersion);
+    const onePasswordClientNameEntry = readStringSetting("onePasswordClientName", fileConfig.onePasswordClientName, defaults.onePasswordClientName);
+    const onePasswordClientVersionEntry = readStringSetting("onePasswordClientVersion", fileConfig.onePasswordClientVersion, defaults.onePasswordClientVersion);
     const config = {
         defaultVault: defaultVaultEntry.value,
         vaultPolicy: vaultPolicyEntry.value,
@@ -414,8 +414,8 @@ export function loadEffectiveConfig(options) {
         timeoutMs: timeoutMsEntry.value,
         stdinTimeoutMs: stdinTimeoutMsEntry.value,
         concurrency: concurrencyEntry.value,
-        integrationName: integrationNameEntry.value,
-        integrationVersion: integrationVersionEntry.value
+        onePasswordClientName: onePasswordClientNameEntry.value,
+        onePasswordClientVersion: onePasswordClientVersionEntry.value
     };
     const provenance = {
         defaultVault: defaultVaultEntry,
@@ -427,8 +427,8 @@ export function loadEffectiveConfig(options) {
         timeoutMs: timeoutMsEntry,
         stdinTimeoutMs: stdinTimeoutMsEntry,
         concurrency: concurrencyEntry,
-        integrationName: integrationNameEntry,
-        integrationVersion: integrationVersionEntry
+        onePasswordClientName: onePasswordClientNameEntry,
+        onePasswordClientVersion: onePasswordClientVersionEntry
     };
     return {
         config,

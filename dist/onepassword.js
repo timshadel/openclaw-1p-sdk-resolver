@@ -80,8 +80,8 @@ async function resolveWithConcurrency(secrets, refs, timeoutMs, concurrency) {
 export async function createOnePasswordResolver(options) {
     const client = await createClient({
         auth: options.auth,
-        integrationName: options.integrationName,
-        integrationVersion: options.integrationVersion
+        integrationName: options.clientName,
+        integrationVersion: options.clientVersion
     });
     const secrets = client.secrets;
     if (!secrets) {
