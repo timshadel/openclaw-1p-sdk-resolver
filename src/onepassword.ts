@@ -60,6 +60,13 @@ function toMapFromResolveAllResult(refs: string[], result: unknown): Map<string,
       const value = result[i];
       if (typeof value === "string") {
         values.set(refs[i], value);
+        continue;
+      }
+      if (value && typeof value === "object") {
+        const candidateValue = (value as { value?: unknown }).value;
+        if (typeof candidateValue === "string") {
+          values.set(refs[i], candidateValue);
+        }
       }
     }
     return values;
@@ -70,6 +77,13 @@ function toMapFromResolveAllResult(refs: string[], result: unknown): Map<string,
       const value = (result as Record<string, unknown>)[ref];
       if (typeof value === "string") {
         values.set(ref, value);
+        continue;
+      }
+      if (value && typeof value === "object") {
+        const candidateValue = (value as { value?: unknown }).value;
+        if (typeof candidateValue === "string") {
+          values.set(ref, candidateValue);
+        }
       }
     }
   }
@@ -133,7 +147,18 @@ export async function createOnePasswordResolver(options: {
       if (typeof secrets.resolveAll === "function") {
         try {
           const result = await withTimeout(secrets.resolveAll(refs), timeoutMs);
-          return toMapFromResolveAllResult(refs, result);
+          const mapped = toMapFromResolveAllResult(refs, result);
+          if (mapped.size > 0 || typeof secrets.resolve !== "function") {
+            return mapped;
+          }
+          // Some SDK versions may return non-string/non-map bulk payload shapes;
+          // fall back to per-ref resolve for compatibility.
+          return resolveWithConcurrency(
+            { resolve: secrets.resolve.bind(secrets) },
+            refs,
+            timeoutMs,
+            concurrency
+          );
         } catch {
           // Fall back to per-ref resolving for compatibility/resilience.
         }

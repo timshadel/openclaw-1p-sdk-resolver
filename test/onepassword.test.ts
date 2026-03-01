@@ -106,6 +106,55 @@ describe("onepassword adapter", () => {
     expect(objResult.get(refs[1])).toBe("value-b");
   });
 
+  it("handles resolveAll nested value payload shapes", async () => {
+    const resolveAll = vi
+      .fn(async () => [{ value: "value-a" }, { value: "value-b" }])
+      .mockImplementationOnce(async () => [{ value: "value-a" }, { value: "value-b" }])
+      .mockImplementationOnce(async () => ({
+        "op://Main/item/a": { value: "value-a" },
+        "op://Main/item/b": { value: "value-b" }
+      }));
+    createClientMock.mockResolvedValue({
+      secrets: { resolveAll }
+    } as unknown as Awaited<ReturnType<typeof createClient>>);
+
+    const adapter = await createOnePasswordResolver({
+      auth: "token",
+      clientName: "test",
+      clientVersion: "1.0.0"
+    });
+    const refs = ["op://Main/item/a", "op://Main/item/b"];
+
+    const arrResult = await adapter.resolveRefs(refs, 1000, 4);
+    const objResult = await adapter.resolveRefs(refs, 1000, 4);
+
+    expect(arrResult.get(refs[0])).toBe("value-a");
+    expect(arrResult.get(refs[1])).toBe("value-b");
+    expect(objResult.get(refs[0])).toBe("value-a");
+    expect(objResult.get(refs[1])).toBe("value-b");
+  });
+
+  it("falls back to per-ref resolve when resolveAll returns unsupported empty payload", async () => {
+    const resolve = vi.fn(async (ref: string) => `v:${ref}`);
+    createClientMock.mockResolvedValue({
+      secrets: {
+        resolveAll: vi.fn(async () => ({ unexpected: true })),
+        resolve
+      }
+    } as unknown as Awaited<ReturnType<typeof createClient>>);
+
+    const adapter = await createOnePasswordResolver({
+      auth: "token",
+      clientName: "test",
+      clientVersion: "1.0.0"
+    });
+    const refs = ["op://Main/item/a", "op://Main/item/b"];
+    const result = await adapter.resolveRefs(refs, 1000, 2);
+
+    expect(result.get(refs[0])).toBe(`v:${refs[0]}`);
+    expect(result.get(refs[1])).toBe(`v:${refs[1]}`);
+  });
+
   it("falls back to per-ref resolve when resolveAll throws", async () => {
     const resolve = vi.fn(async (ref: string) => `v:${ref}`);
     createClientMock.mockResolvedValue({
