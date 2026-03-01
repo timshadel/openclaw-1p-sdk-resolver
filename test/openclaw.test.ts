@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_OPENCLAW_PROVIDER_ALIAS,
   buildResolverProviderSnippet,
   checkOpenclawProviderSetup,
   parseOpenclawConfigText,
@@ -104,7 +105,7 @@ describe("openclaw helpers", () => {
       {
         // comment
         "providers": [
-          { "name": "onepassword", "kind": "exec", "config": { "jsonOnly": true } },
+          { "name": "custom_provider", "kind": "exec", "config": { "jsonOnly": true } },
         ],
       }
     `;
@@ -119,10 +120,10 @@ describe("openclaw helpers", () => {
   it("builds provider snippet with required fields", () => {
     const snippet = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
-      providerAlias: "onepassword"
+      providerAlias: "custom_provider"
     });
     expect(snippet.providers).toHaveLength(1);
-    expect(snippet.providers[0].name).toBe("onepassword");
+    expect(snippet.providers[0].name).toBe("custom_provider");
     expect(snippet.providers[0].kind).toBe("exec");
     expect(snippet.providers[0].config.jsonOnly).toBe(true);
     expect(snippet.providers[0].config.passEnv).toEqual([
@@ -136,17 +137,17 @@ describe("openclaw helpers", () => {
     const omitted = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver"
     });
-    expect(omitted.providers[0].name).toBe("onepassword");
+    expect(omitted.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
 
     const blank = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
       providerAlias: "   "
     });
-    expect(blank.providers[0].name).toBe("onepassword");
+    expect(blank.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
   });
 
   it("detects provider setup problems and passes valid config", () => {
-    const missing = checkOpenclawProviderSetup({ parsedConfig: { providers: [] }, providerAlias: "onepassword" });
+    const missing = checkOpenclawProviderSetup({ parsedConfig: { providers: [] }, providerAlias: "custom_provider" });
     expect(missing.providerFound).toBe(false);
     expect(missing.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
 
@@ -154,7 +155,7 @@ describe("openclaw helpers", () => {
       parsedConfig: {
         providers: [
           {
-            name: "onepassword",
+            name: "custom_provider",
             kind: "file",
             config: {
               jsonOnly: false,
@@ -163,7 +164,7 @@ describe("openclaw helpers", () => {
           }
         ]
       },
-      providerAlias: "onepassword"
+      providerAlias: "custom_provider"
     });
     expect(bad.providerFound).toBe(true);
     expect(bad.findings.some((finding) => finding.code === "provider_kind_mismatch")).toBe(true);
@@ -176,7 +177,7 @@ describe("openclaw helpers", () => {
         secrets: {
           providers: [
             {
-              name: "onepassword",
+              name: "custom_provider",
               kind: "exec",
               config: {
                 jsonOnly: true,
@@ -187,7 +188,7 @@ describe("openclaw helpers", () => {
           ]
         }
       },
-      providerAlias: "onepassword"
+      providerAlias: "custom_provider"
     });
     expect(good.providerFound).toBe(true);
     expect(good.findings).toHaveLength(0);
@@ -208,7 +209,7 @@ describe("openclaw helpers", () => {
           }
         ]
       },
-      providerAlias: "onepassword"
+      providerAlias: "custom_provider"
     });
     expect(byCommand.providerFound).toBe(true);
     expect(byCommand.findings).toHaveLength(0);
@@ -219,7 +220,7 @@ describe("openclaw helpers", () => {
           providers: "not-an-array"
         }
       },
-      providerAlias: "onepassword"
+      providerAlias: "custom_provider"
     });
     expect(invalidContainers.providerFound).toBe(false);
     expect(invalidContainers.findings.some((finding) => finding.code === "provider_missing")).toBe(true);

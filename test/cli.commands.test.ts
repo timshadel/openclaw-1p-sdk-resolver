@@ -446,7 +446,7 @@ describe("command cli", () => {
     const parsed = JSON.parse(streams.out.stdout) as {
       providers: Array<{ name: string; kind: string; config: { jsonOnly: boolean; passEnv: string[] } }>;
     };
-    expect(parsed.providers[0].name).toBe("onepassword");
+    expect(parsed.providers[0].name).toBe("1p-sdk-resolver");
     expect(parsed.providers[0].kind).toBe("exec");
     expect(parsed.providers[0].config.jsonOnly).toBe(true);
     expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
@@ -640,7 +640,7 @@ describe("command cli", () => {
         secrets: {
           providers: [
             {
-              name: "onepassword",
+              name: "resolver",
               kind: "exec",
               config: {
                 jsonOnly: true,
@@ -672,10 +672,10 @@ describe("command cli", () => {
     expect(parsed.resolverProvenance.defaultVault).toBeDefined();
   });
 
-  it("onepassword check --json reports readiness without leaking token", async () => {
+  it("1password check --json reports readiness without leaking token", async () => {
     const streams = createStreams();
     const token = "op_secret_token_for_onepassword_check";
-    const code = await runCli(["onepassword", "check", "--json"], {
+    const code = await runCli(["1password", "check", "--json"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: token
@@ -702,9 +702,9 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes(token)).toBe(false);
   });
 
-  it("onepassword check returns error for missing token and runtime for sdk init failure", async () => {
+  it("1password check returns error for missing token and runtime for sdk init failure", async () => {
     const missingTokenStreams = createStreams();
-    const missingTokenCode = await runCli(["onepassword", "check", "--json"], {
+    const missingTokenCode = await runCli(["1password", "check", "--json"], {
       env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
       streams: missingTokenStreams,
       runResolver: async () => undefined
@@ -714,7 +714,7 @@ describe("command cli", () => {
     expect(missingParsed.status).toBe("error");
 
     const sdkFailStreams = createStreams();
-    const sdkFailCode = await runCli(["onepassword", "check", "--json"], {
+    const sdkFailCode = await runCli(["1password", "check", "--json"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -730,9 +730,9 @@ describe("command cli", () => {
     expect(sdkFailParsed.status).toBe("runtime-error");
   });
 
-  it("onepassword check --check returns findings for unresolved probe", async () => {
+  it("1password check --check returns findings for unresolved probe", async () => {
     const streams = createStreams();
-    const code = await runCli(["onepassword", "check", "--json", "--check", "--probe-id", "MyAPI/token"], {
+    const code = await runCli(["1password", "check", "--json", "--check", "--probe-id", "MyAPI/token"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -750,9 +750,9 @@ describe("command cli", () => {
     expect(parsed.probe.reason).toBe("sdk-unresolved");
   });
 
-  it("onepassword check probe resolved/unresolved reasons are safe and deterministic", async () => {
+  it("1password check probe resolved/unresolved reasons are safe and deterministic", async () => {
     const resolvedStreams = createStreams();
-    const resolvedCode = await runCli(["onepassword", "check", "--json", "--probe-id", "MyAPI/token"], {
+    const resolvedCode = await runCli(["1password", "check", "--json", "--probe-id", "MyAPI/token"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -774,7 +774,7 @@ describe("command cli", () => {
 
     const policyBlockedStreams = createStreams();
     const policyBlockedCode = await runCli(
-      ["onepassword", "check", "--json", "--probe-id", "op://OtherVault/Item/field"],
+      ["1password", "check", "--json", "--probe-id", "op://OtherVault/Item/field"],
       {
         env: {
           HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
@@ -795,7 +795,7 @@ describe("command cli", () => {
     expect(policyBlockedParsed.probe.reason).toBe("policy-blocked");
 
     const invalidRefStreams = createStreams();
-    const invalidRefCode = await runCli(["onepassword", "check", "--json", "--probe-id", "bad\nid"], {
+    const invalidRefCode = await runCli(["1password", "check", "--json", "--probe-id", "bad\nid"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -812,9 +812,9 @@ describe("command cli", () => {
     expect(invalidRefParsed.probe.reason).toBe("invalid-ref");
   });
 
-  it("onepassword diagnose --json includes resolver internals and policy summary", async () => {
+  it("1password diagnose --json includes resolver internals and policy summary", async () => {
     const streams = createStreams();
-    const code = await runCli(["onepassword", "diagnose", "--json", "--probe-id", "MyAPI/token"], {
+    const code = await runCli(["1password", "diagnose", "--json", "--probe-id", "MyAPI/token"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -842,14 +842,14 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes("hidden-secret")).toBe(false);
   });
 
-  it("onepassword diagnose reports configured allowedIdRegex policy state", async () => {
+  it("1password diagnose reports configured allowedIdRegex policy state", async () => {
     const home = createHomeWithConfig({
       defaultVault: "MainVault",
       vaultPolicy: "default_vault",
       allowedIdRegex: "^[A-Za-z0-9_\\/-]+$"
     });
     const streams = createStreams();
-    const code = await runCli(["onepassword", "diagnose", "--json"], {
+    const code = await runCli(["1password", "diagnose", "--json"], {
       env: {
         HOME: home,
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -865,14 +865,14 @@ describe("command cli", () => {
     expect(parsed.policy.allowedIdRegexState).toBe("configured");
   });
 
-  it("onepassword diagnose reports fail-closed allowedIdRegex policy state", async () => {
+  it("1password diagnose reports fail-closed allowedIdRegex policy state", async () => {
     const home = createHomeWithConfig({
       defaultVault: "MainVault",
       vaultPolicy: "default_vault",
       allowedIdRegex: "["
     });
     const streams = createStreams();
-    const code = await runCli(["onepassword", "diagnose", "--json"], {
+    const code = await runCli(["1password", "diagnose", "--json"], {
       env: {
         HOME: home,
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -888,9 +888,9 @@ describe("command cli", () => {
     expect(parsed.policy.allowedIdRegexState).toBe("fail-closed");
   });
 
-  it("onepassword snippet outputs minimal/full json and enforces defaultVault requirement", async () => {
+  it("1password snippet outputs minimal/full json and enforces defaultVault requirement", async () => {
     const missingStreams = createStreams();
-    const missingCode = await runCli(["onepassword", "snippet"], {
+    const missingCode = await runCli(["1password", "snippet"], {
       env: {},
       streams: missingStreams,
       runResolver: async () => undefined
@@ -899,7 +899,7 @@ describe("command cli", () => {
     expect(missingStreams.out.stderr).toContain("defaultVault is required");
 
     const minimalStreams = createStreams();
-    const minimalCode = await runCli(["onepassword", "snippet", "--default-vault", "VaultOne"], {
+    const minimalCode = await runCli(["1password", "snippet", "--default-vault", "VaultOne"], {
       env: {},
       streams: minimalStreams,
       runResolver: async () => undefined
@@ -910,7 +910,7 @@ describe("command cli", () => {
     expect(minimalParsed.vaultPolicy).toBe("default_vault");
 
     const fallbackStreams = createStreams();
-    const fallbackCode = await runCli(["onepassword", "snippet"], {
+    const fallbackCode = await runCli(["1password", "snippet"], {
       env: { HOME: createHomeWithConfig({ defaultVault: "ExistingVault", vaultPolicy: "default_vault" }) },
       streams: fallbackStreams,
       runResolver: async () => undefined
@@ -920,7 +920,7 @@ describe("command cli", () => {
     expect(fallbackParsed.defaultVault).toBe("ExistingVault");
 
     const fullStreams = createStreams();
-    const fullCode = await runCli(["onepassword", "snippet", "--full"], {
+    const fullCode = await runCli(["1password", "snippet", "--full"], {
       env: { HOME: createHomeWithConfig({ defaultVault: "FullVault", vaultPolicy: "default_vault" }) },
       streams: fullStreams,
       runResolver: async () => undefined
@@ -931,7 +931,7 @@ describe("command cli", () => {
     expect(fullParsed.maxIds).toBeDefined();
   });
 
-  it("onepassword snippet prints tty instructions and supports explain/quiet controls", async () => {
+  it("1password snippet prints tty instructions and supports explain/quiet controls", async () => {
     const stdin = new PassThrough() as PassThrough & { isTTY?: boolean };
     const stdout = new PassThrough() as PassThrough & { isTTY?: boolean };
     const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
@@ -944,7 +944,7 @@ describe("command cli", () => {
     stderr.on("data", (chunk: Buffer | string) => {
       err += chunk.toString();
     });
-    const code = await runCli(["onepassword", "snippet", "--default-vault", "MainVault"], {
+    const code = await runCli(["1password", "snippet", "--default-vault", "MainVault"], {
       env: {},
       streams: { stdin, stdout, stderr },
       runResolver: async () => undefined
@@ -954,7 +954,7 @@ describe("command cli", () => {
     expect(err).toContain("No tokens or secret values are included.");
 
     const explainStreams = createStreams();
-    const explainCode = await runCli(["onepassword", "snippet", "--default-vault", "MainVault", "--explain"], {
+    const explainCode = await runCli(["1password", "snippet", "--default-vault", "MainVault", "--explain"], {
       env: {},
       streams: explainStreams,
       runResolver: async () => undefined
@@ -964,7 +964,7 @@ describe("command cli", () => {
 
     const quietStreams = createStreams();
     const quietCode = await runCli(
-      ["onepassword", "snippet", "--default-vault", "MainVault", "--quiet", "--explain"],
+      ["1password", "snippet", "--default-vault", "MainVault", "--quiet", "--explain"],
       {
         env: {},
         streams: quietStreams,
@@ -1356,13 +1356,33 @@ describe("command cli", () => {
     expect(unknownOpenclawSubcommandStreams.out.stderr).toContain("Unknown openclaw subcommand");
 
     const unknownOnepasswordSubcommandStreams = createStreams();
-    const unknownOnepasswordSubcommandCode = await runCli(["onepassword", "bad-subcommand"], {
+    const unknownOnepasswordSubcommandCode = await runCli(["1password", "bad-subcommand"], {
       env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
       streams: unknownOnepasswordSubcommandStreams,
       runResolver: async () => undefined
     });
     expect(unknownOnepasswordSubcommandCode).toBe(EXIT_POLICY.ERROR);
-    expect(unknownOnepasswordSubcommandStreams.out.stderr).toContain("Unknown onepassword subcommand");
+    expect(unknownOnepasswordSubcommandStreams.out.stderr).toContain("Unknown 1password subcommand");
+  });
+
+  it("accepts 1p as shorthand for 1password command group", async () => {
+    const streams = createStreams();
+    const code = await runCli(["1p", "check", "--json"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      createResolver: async () => ({
+        resolveAll: async () => ({}),
+        resolve: async () => undefined
+      }),
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as { status: string };
+    expect(parsed.status).toBe("clean");
   });
 
   it("routes to resolver mode when invoked with no command arguments", async () => {

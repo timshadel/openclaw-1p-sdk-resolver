@@ -102,9 +102,10 @@ openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force
 openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]
 openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]
 openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]
-openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
-openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]
-openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]
+openclaw-1p-sdk-resolver 1password check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
+openclaw-1p-sdk-resolver 1password diagnose [--json] [--probe-id <id>] [--debug]
+openclaw-1p-sdk-resolver 1password snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]
+openclaw-1p-sdk-resolver 1p <check|diagnose|snippet> [...flags]
 openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--debug] [--reveal --yes]
 ```
 
@@ -120,12 +121,12 @@ Notes:
   - returns findings with actionable next steps
 - `openclaw diagnose` provides deeper troubleshooting details including resolver config/provenance.
 - `openclaw snippet` prints provider JSON only on `stdout` so it can be pasted directly into OpenClaw config.
-- `onepassword check` is the high-signal 1Password readiness command:
+- `1password check` is the high-signal 1Password readiness command:
   - validates resolver config
   - checks token presence and SDK init status
   - optionally probes a specific id/ref safely via `--probe-id` (never prints values)
-- `onepassword diagnose` provides deep resolver and policy diagnostics.
-- `onepassword snippet` prints resolver config JSON only on `stdout` (minimal by default, full config with `--full`).
+- `1password diagnose` provides deep resolver and policy diagnostics.
+- `1password snippet` prints resolver config JSON only on `stdout` (minimal by default, full config with `--full`).
 - Snippet instruction text is emitted on `stderr` only:
   - default: only when `stderr` is a TTY
   - `--explain`: force instructions on `stderr`
@@ -184,10 +185,10 @@ The snippet includes:
   - `openclaw-1p-sdk-resolver openclaw diagnose --json`
   - `openclaw-1p-sdk-resolver openclaw snippet`
 - 1Password side:
-  - `openclaw-1p-sdk-resolver onepassword check --check`
-  - `openclaw-1p-sdk-resolver onepassword check --probe-id op://Vault/Item/field --json`
-  - `openclaw-1p-sdk-resolver onepassword diagnose --json`
-  - `openclaw-1p-sdk-resolver onepassword snippet --default-vault MainVault`
+  - `openclaw-1p-sdk-resolver 1password check --check`
+  - `openclaw-1p-sdk-resolver 1password check --probe-id op://Vault/Item/field --json`
+  - `openclaw-1p-sdk-resolver 1password diagnose --json`
+  - `openclaw-1p-sdk-resolver 1password snippet --default-vault MainVault`
 
 ## Architecture
 
@@ -208,7 +209,7 @@ Current source layout is intentionally small and split by responsibility:
   - Falls back to per-ref `resolve` when bulk payloads are unsupported/empty.
   - Returns partial success maps; unresolved refs are omitted.
 - `src/cli.ts`
-  - Handles subcommand routing (`doctor`, `config`, `openclaw`, `onepassword`, `resolve`).
+  - Handles subcommand routing (`doctor`, `config`, `openclaw`, `1password`, `1p`, `resolve`).
   - Keeps CLI output safe-by-default (no secret values unless explicit reveal).
 - `src/openclaw.ts`
   - Resolves OpenClaw config path precedence from env/flags.
@@ -297,7 +298,7 @@ Example provider entry:
   "secrets": {
     "providers": [
       {
-        "name": "onepassword",
+        "name": "1p-sdk-resolver",
         "kind": "exec",
         "config": {
           "jsonOnly": true,

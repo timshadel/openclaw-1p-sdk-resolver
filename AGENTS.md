@@ -42,7 +42,7 @@ This file is written for:
 - Human/operator commands for safe configuration checks and setup guidance.
 - Includes command families for:
   - `openclaw ...` (provider/config integration checks)
-  - `onepassword ...` (resolver readiness/policy checks)
+  - `1password ...` / `1p ...` (resolver readiness/policy checks)
   - `config ...` and `doctor` (resolver config and health)
 - Must remain safe-by-default (no secret values unless explicitly requested with gated reveal behavior).
 

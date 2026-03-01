@@ -29,6 +29,8 @@ export type OpenclawProviderCheckResult = {
   suggestions: string[];
 };
 
+export const DEFAULT_OPENCLAW_PROVIDER_ALIAS = "1p-sdk-resolver";
+
 export function resolveOpenclawConfigPath(options: {
   env: NodeJS.ProcessEnv;
   explicitPath?: string;
@@ -141,7 +143,7 @@ export function buildResolverProviderSnippet(options: {
     };
   }>;
 } {
-  const providerAlias = options.providerAlias?.trim() || "onepassword";
+  const providerAlias = options.providerAlias?.trim() || DEFAULT_OPENCLAW_PROVIDER_ALIAS;
   return {
     providers: [
       {
@@ -164,7 +166,7 @@ export function checkOpenclawProviderSetup(options: {
 }): OpenclawProviderCheckResult {
   const findings: OpenclawProviderFinding[] = [];
   const suggestions: string[] = [];
-  const providerAlias = options.providerAlias?.trim() || "onepassword";
+  const providerAlias = options.providerAlias?.trim() || DEFAULT_OPENCLAW_PROVIDER_ALIAS;
   const root = options.parsedConfig as Record<string, unknown> | undefined;
   if (!root || typeof root !== "object") {
     return {
