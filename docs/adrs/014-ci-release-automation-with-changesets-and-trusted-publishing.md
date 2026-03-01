@@ -1,13 +1,13 @@
 # CI Release Automation with Changesets and Trusted Publishing
 
 - `id`: `014-ci-release-automation-with-changesets-and-trusted-publishing`
-- `status`: `accepted`
+- `status`: `superseded`
 - `date`: `2026-03-01`
 - `deciders`: `["openclaw-1p-sdk-resolver maintainers"]`
 - `consulted`: `[]`
 - `informed`: `["contributors", "operators"]`
 - `supersedes`: `""`
-- `superseded-by`: `""`
+- `superseded-by`: `016-intentional-release-gating-and-manual-dispatch`
 
 ## Context
 

@@ -75,3 +75,4 @@ Use [`TEMPLATE.md`](./TEMPLATE.md) for new ADRs.
 - [`013-ci-security-and-ai-review-governance.md`](./013-ci-security-and-ai-review-governance.md)
 - [`014-ci-release-automation-with-changesets-and-trusted-publishing.md`](./014-ci-release-automation-with-changesets-and-trusted-publishing.md)
 - [`015-node-compatibility-baseline-and-ci-matrix-policy.md`](./015-node-compatibility-baseline-and-ci-matrix-policy.md)
+- [`016-intentional-release-gating-and-manual-dispatch.md`](./016-intentional-release-gating-and-manual-dispatch.md)
