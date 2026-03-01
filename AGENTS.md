@@ -24,6 +24,11 @@ This file is written for:
 4) **Fail closed**
    - On malformed input / missing auth / SDK errors: return valid protocol JSON with an empty `values` map and exit successfully.
 
+5) **Never edit OpenClaw config files**
+   - This tool may inspect/read OpenClaw config files for diagnostics and suggestions.
+   - It must never create, modify, or delete OpenClaw config files (for example `openclaw.json`) directly.
+   - Any future "apply" behavior for OpenClaw config is out of scope unless explicitly approved in repository policy.
+
 ---
 
 ## What we are building
