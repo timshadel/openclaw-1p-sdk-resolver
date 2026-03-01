@@ -102,6 +102,9 @@ openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force
 openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]
 openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>]
 openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]
+openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
+openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]
+openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json]
 openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--debug] [--reveal --yes]
 ```
 
@@ -117,6 +120,12 @@ Notes:
   - returns findings with actionable next steps
 - `openclaw diagnose` provides deeper troubleshooting details including resolver config/provenance.
 - `openclaw snippet` prints provider JSON only so it can be pasted directly into OpenClaw config.
+- `onepassword check` is the high-signal 1Password readiness command:
+  - validates resolver config
+  - checks token presence and SDK init status
+  - optionally probes a specific id/ref safely via `--probe-id` (never prints values)
+- `onepassword diagnose` provides deep resolver and policy diagnostics.
+- `onepassword snippet` prints resolver config JSON only (minimal by default, full config with `--full`).
 - `resolve` is redacted by default and never prints secret values unless `--reveal` is used.
 - `resolve --debug` adds safe reason codes for unresolved ids (for example `policy-blocked`, `invalid-ref`, `sdk-unresolved`) without revealing secrets.
 - `resolve --reveal` requires explicit consent:
@@ -162,6 +171,18 @@ The snippet includes:
 - `passEnv`: `HOME`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_RESOLVER_CONFIG`
 - `trustedDirs` suggestions
 - This tool never edits OpenClaw files; paste snippet output manually.
+
+## Two-Sided Checks
+
+- OpenClaw side:
+  - `openclaw-1p-sdk-resolver openclaw check --check`
+  - `openclaw-1p-sdk-resolver openclaw diagnose --json`
+  - `openclaw-1p-sdk-resolver openclaw snippet`
+- 1Password side:
+  - `openclaw-1p-sdk-resolver onepassword check --check`
+  - `openclaw-1p-sdk-resolver onepassword check --probe-id op://Vault/Item/field --json`
+  - `openclaw-1p-sdk-resolver onepassword diagnose --json`
+  - `openclaw-1p-sdk-resolver onepassword snippet --default-vault MainVault`
 
 ## Architecture
 

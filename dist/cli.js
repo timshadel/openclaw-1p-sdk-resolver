@@ -112,6 +112,9 @@ function printUsage(stream) {
     stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver onepassword check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver onepassword diagnose [--json] [--probe-id <id>] [--debug]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver onepassword snippet [--default-vault <name>] [--full] [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`);
 }
 export function truncateCell(value, maxWidth) {
@@ -869,6 +872,310 @@ async function runOpenclawDiagnose(args, context, runtime) {
     }
     return { code: analysis.exit };
 }
+function parseProbeTimeoutMs(rawValue, fallback) {
+    if (!rawValue) {
+        return { timeoutMs: fallback };
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+        return {
+            timeoutMs: fallback,
+            issue: {
+                code: "invalid_probe_timeout",
+                message: "probe-timeout-ms must be a finite number; default timeout used."
+            }
+        };
+    }
+    const rounded = Math.trunc(parsed);
+    const clamped = Math.min(120_000, Math.max(1_000, rounded));
+    const issue = clamped !== rounded
+        ? {
+            code: "invalid_probe_timeout",
+            message: `probe-timeout-ms was clamped to ${clamped}.`
+        }
+        : undefined;
+    return { timeoutMs: clamped, issue };
+}
+async function analyzeOnePasswordSetup(args, context, runtime) {
+    const { env } = context;
+    const { flags } = parseFlags(args);
+    const checkMode = hasFlag(flags, "check");
+    const debug = hasFlag(flags, "debug");
+    const probeId = getStringFlag(flags, "probe-id");
+    const probeTimeout = parseProbeTimeoutMs(getStringFlag(flags, "probe-timeout-ms"), 25_000);
+    const effective = loadEffectiveConfig({ env });
+    const summary = summarizeIssues(effective.issues);
+    const tokenPresent = Boolean(env.OP_SERVICE_ACCOUNT_TOKEN?.trim());
+    const issues = effective.issues.map((issue) => ({
+        code: issue.code,
+        message: issue.message,
+        key: issue.key,
+        level: issue.level
+    }));
+    if (probeTimeout.issue) {
+        issues.push({ code: probeTimeout.issue.code, message: probeTimeout.issue.message, level: "warning" });
+    }
+    let sdkStatus = "skipped";
+    const canAttemptSdk = tokenPresent && !hasConfigErrors(effective);
+    const createResolver = runtime.createResolver ?? createOnePasswordResolver;
+    let resolverForProbe = runtime.resolver;
+    if (canAttemptSdk && !runtime.resolver) {
+        try {
+            resolverForProbe = await createResolver({
+                auth: env.OP_SERVICE_ACCOUNT_TOKEN?.trim() ?? "",
+                clientName: effective.config.onePasswordClientName,
+                clientVersion: effective.config.onePasswordClientVersion
+            });
+            sdkStatus = "ok";
+        }
+        catch {
+            sdkStatus = "error";
+            issues.push({
+                code: "onepassword_sdk_init_failed",
+                message: "Unable to initialize 1Password SDK client.",
+                level: "error"
+            });
+        }
+    }
+    else if (runtime.resolver) {
+        sdkStatus = canAttemptSdk ? "ok" : "skipped";
+    }
+    else if (!tokenPresent) {
+        issues.push({
+            code: "token_missing",
+            message: "OP_SERVICE_ACCOUNT_TOKEN is missing.",
+            level: "error"
+        });
+    }
+    const probe = {
+        requested: Boolean(probeId),
+        ...(probeId ? { id: probeId } : {}),
+        status: "skipped",
+        reason: "not-requested"
+    };
+    let probeRuntimeFailure = false;
+    if (probeId) {
+        if (hasConfigErrors(effective)) {
+            probe.status = "skipped";
+            probe.reason = "config-invalid";
+        }
+        else if (!tokenPresent) {
+            probe.status = "skipped";
+            probe.reason = "token-missing";
+        }
+        else if (sdkStatus === "error") {
+            probe.status = "skipped";
+            probe.reason = "sdk-init-failed";
+        }
+        else {
+            const sanitized = sanitizeIds([probeId], 1, effective.config.allowedIdRegex);
+            if (sanitized.length === 0) {
+                probe.status = "filtered";
+                probe.reason = "invalid-ref";
+            }
+            else {
+                const ref = mapIdToReference(sanitized[0], effective.config.defaultVault);
+                if (!isValidSecretReference(ref)) {
+                    probe.status = "filtered";
+                    probe.reason = "invalid-ref";
+                }
+                else {
+                    const vault = extractVaultFromReference(ref);
+                    if (!vault) {
+                        probe.status = "filtered";
+                        probe.reason = "invalid-ref";
+                    }
+                    else if (!isVaultAllowed({
+                        vault,
+                        defaultVault: effective.config.defaultVault,
+                        vaultPolicy: effective.config.vaultPolicy,
+                        vaultWhitelist: effective.config.vaultWhitelist
+                    })) {
+                        probe.status = "filtered";
+                        probe.reason = "policy-blocked";
+                    }
+                    else {
+                        try {
+                            const resolver = resolverForProbe ??
+                                (await createResolver({
+                                    auth: env.OP_SERVICE_ACCOUNT_TOKEN?.trim() ?? "",
+                                    clientName: effective.config.onePasswordClientName,
+                                    clientVersion: effective.config.onePasswordClientVersion
+                                }));
+                            const resolved = await resolver.resolveRefs([ref], probeTimeout.timeoutMs, 1);
+                            const value = resolved.get(ref);
+                            if (typeof value === "string") {
+                                probe.status = "resolved";
+                                probe.reason = "resolved";
+                            }
+                            else {
+                                probe.status = "unresolved";
+                                probe.reason = "sdk-unresolved";
+                            }
+                        }
+                        catch {
+                            probeRuntimeFailure = true;
+                            probe.status = "unresolved";
+                            probe.reason = "probe-runtime-failed";
+                            issues.push({
+                                code: "probe_runtime_failed",
+                                message: "Probe resolution failed at runtime.",
+                                level: "error"
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    const status = sdkStatus === "error" || probeRuntimeFailure
+        ? "runtime-error"
+        : hasConfigErrors(effective) || !tokenPresent
+            ? "error"
+            : summary.warnings > 0 || (probe.requested && probe.status !== "resolved")
+                ? "findings"
+                : "clean";
+    const exit = status === "runtime-error"
+        ? EXIT_POLICY.RUNTIME
+        : status === "error"
+            ? EXIT_POLICY.ERROR
+            : status === "findings" && checkMode
+                ? EXIT_POLICY.FINDINGS
+                : EXIT_POLICY.OK;
+    return {
+        payload: {
+            status,
+            checkMode,
+            tokenPresent,
+            sdkStatus,
+            config: {
+                path: effective.path,
+                valid: !hasConfigErrors(effective),
+                errors: summary.errors,
+                warnings: summary.warnings
+            },
+            probe: debug ? probe : { ...probe, ...(probe.requested ? { id: probe.id } : {}) },
+            issues
+        },
+        effective,
+        exit
+    };
+}
+async function runOnepasswordCheck(args, context, runtime) {
+    const { streams } = context;
+    const { flags } = parseFlags(args);
+    const asJson = hasFlag(flags, "json");
+    const analysis = await analyzeOnePasswordSetup(args, context, runtime);
+    if (asJson) {
+        printJson(streams.stdout, analysis.payload);
+    }
+    else {
+        streams.stdout.write("ONEPASSWORD CHECK\n\n");
+        streams.stdout.write("SUMMARY\n");
+        streams.stdout.write(`- status: ${analysis.payload.status}\n`);
+        streams.stdout.write(`- config valid: ${analysis.payload.config.valid ? "yes" : "no"}\n`);
+        streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${analysis.payload.tokenPresent ? "yes" : "no"}\n`);
+        streams.stdout.write(`- 1Password SDK: ${analysis.payload.sdkStatus}\n`);
+        if (analysis.payload.probe.requested) {
+            streams.stdout.write(`- probe status: ${analysis.payload.probe.status}\n`);
+            streams.stdout.write(`- probe reason: ${analysis.payload.probe.reason}\n`);
+        }
+        streams.stdout.write("\nFINDINGS\n");
+        if (analysis.payload.issues.length === 0) {
+            streams.stdout.write("- none\n");
+        }
+        else {
+            for (const issue of analysis.payload.issues) {
+                streams.stdout.write(`- ${issue.code}: ${issue.message}\n`);
+            }
+        }
+        streams.stdout.write("\nNEXT ACTIONS\n");
+        if (!analysis.payload.tokenPresent) {
+            streams.stdout.write("- Export OP_SERVICE_ACCOUNT_TOKEN in your shell or provider passEnv.\n");
+        }
+        if (!analysis.payload.config.valid) {
+            streams.stdout.write("- Run `openclaw-1p-sdk-resolver doctor --json` to inspect config validation errors.\n");
+        }
+        if (analysis.payload.probe.requested && analysis.payload.probe.status !== "resolved") {
+            streams.stdout.write("- Retry probe with a known-good id/ref in an allowed vault.\n");
+        }
+        if (analysis.payload.issues.length === 0) {
+            streams.stdout.write("- none\n");
+        }
+    }
+    return { code: analysis.exit };
+}
+async function runOnepasswordDiagnose(args, context, runtime) {
+    const { streams } = context;
+    const { flags } = parseFlags(args);
+    const asJson = hasFlag(flags, "json");
+    const analysis = await analyzeOnePasswordSetup(args, context, runtime);
+    const provenance = analysis.effective.provenance.allowedIdRegex;
+    const allowedIdRegexState = provenance?.value instanceof RegExp && provenance.value.source === "$a"
+        ? "fail-closed"
+        : provenance?.value instanceof RegExp
+            ? "configured"
+            : "unset";
+    const payload = {
+        ...analysis.payload,
+        resolverConfig: toSerializableConfig(analysis.effective.config),
+        resolverProvenance: toSerializableProvenance(analysis.effective),
+        resolverIssues: analysis.effective.issues,
+        policy: {
+            defaultVault: analysis.effective.config.defaultVault,
+            vaultPolicy: analysis.effective.config.vaultPolicy,
+            vaultWhitelistCount: analysis.effective.config.vaultWhitelist.length,
+            allowedIdRegexState
+        }
+    };
+    if (asJson) {
+        printJson(streams.stdout, payload);
+    }
+    else {
+        streams.stdout.write("ONEPASSWORD DIAGNOSE\n\n");
+        streams.stdout.write("SUMMARY\n");
+        streams.stdout.write(`- status: ${payload.status}\n`);
+        streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.tokenPresent ? "yes" : "no"}\n`);
+        streams.stdout.write(`- 1Password SDK: ${payload.sdkStatus}\n`);
+        streams.stdout.write(`- probe: ${payload.probe.requested ? `${payload.probe.status} (${payload.probe.reason})` : "not requested"}\n`);
+        streams.stdout.write("\nPOLICY\n");
+        streams.stdout.write(`- defaultVault: ${payload.policy.defaultVault}\n`);
+        streams.stdout.write(`- vaultPolicy: ${payload.policy.vaultPolicy}\n`);
+        streams.stdout.write(`- vaultWhitelistCount: ${payload.policy.vaultWhitelistCount}\n`);
+        streams.stdout.write(`- allowedIdRegexState: ${payload.policy.allowedIdRegexState}\n`);
+        streams.stdout.write("\nRESOLVER CONFIG\n");
+        streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
+        streams.stdout.write("\nRESOLVER PROVENANCE\n");
+        streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
+        streams.stdout.write("\nRESOLVER ISSUES\n");
+        streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
+    }
+    return { code: analysis.exit };
+}
+function runOnepasswordSnippet(args, context) {
+    const { streams, env } = context;
+    const { flags } = parseFlags(args);
+    const includeFull = hasFlag(flags, "full");
+    const defaultVaultFromFlag = getStringFlag(flags, "default-vault");
+    const effective = loadEffectiveConfig({ env });
+    const hasExistingConfigDefaultVault = effective.file.loaded && effective.provenance.defaultVault.source === "config-file";
+    const selectedDefaultVault = defaultVaultFromFlag ?? (hasExistingConfigDefaultVault ? effective.config.defaultVault : undefined);
+    if (!selectedDefaultVault) {
+        streams.stderr.write("defaultVault is required. Pass --default-vault <name>, or keep an existing config file with defaultVault.\n");
+        return { code: EXIT_POLICY.ERROR };
+    }
+    const snippet = includeFull
+        ? {
+            ...toSerializableConfig(effective.config),
+            defaultVault: selectedDefaultVault
+        }
+        : {
+            defaultVault: selectedDefaultVault,
+            vaultPolicy: "default_vault"
+        };
+    printJson(streams.stdout, snippet);
+    return { code: EXIT_POLICY.OK };
+}
 async function runResolve(args, context, runtime) {
     const { streams, env } = context;
     const { flags } = parseFlags(args);
@@ -1007,6 +1314,20 @@ export async function runCli(argv, runtime) {
             return (await runOpenclawDiagnose(argv.slice(2), context, runtime)).code;
         }
         streams.stderr.write("Unknown openclaw subcommand. Use: check | snippet | diagnose\n");
+        return EXIT_POLICY.ERROR;
+    }
+    if (command === "onepassword") {
+        const subcommand = argv[1];
+        if (subcommand === "check") {
+            return (await runOnepasswordCheck(argv.slice(2), context, runtime)).code;
+        }
+        if (subcommand === "diagnose") {
+            return (await runOnepasswordDiagnose(argv.slice(2), context, runtime)).code;
+        }
+        if (subcommand === "snippet") {
+            return runOnepasswordSnippet(argv.slice(2), context).code;
+        }
+        streams.stderr.write("Unknown onepassword subcommand. Use: check | diagnose | snippet\n");
         return EXIT_POLICY.ERROR;
     }
     if (command === "resolve") {

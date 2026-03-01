@@ -1,5 +1,6 @@
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { createOnePasswordResolver, type SecretResolver } from "./onepassword.js";
+import { type ConfigIssue, type EffectiveConfig } from "./protocol.js";
 type CliStreams = {
     stdin: NodeJS.ReadableStream;
     stdout: NodeJS.WritableStream;
@@ -29,6 +30,47 @@ export type ResolveRow = {
     status: "resolved" | "unresolved";
     output: string;
     reason: string;
+};
+type OnePasswordProbeReason = "resolved" | "sdk-unresolved" | "policy-blocked" | "invalid-ref" | "config-invalid" | "token-missing" | "sdk-init-failed" | "probe-runtime-failed" | "not-requested";
+export type OnePasswordProbeResult = {
+    requested: boolean;
+    id?: string;
+    status: "resolved" | "unresolved" | "filtered" | "skipped";
+    reason: OnePasswordProbeReason;
+};
+export type OnePasswordCheckPayload = {
+    status: "clean" | "findings" | "error" | "runtime-error";
+    checkMode: boolean;
+    tokenPresent: boolean;
+    sdkStatus: "ok" | "skipped" | "error";
+    config: {
+        path: EffectiveConfig["path"];
+        valid: boolean;
+        errors: number;
+        warnings: number;
+    };
+    probe: OnePasswordProbeResult;
+    issues: Array<{
+        code: string;
+        message: string;
+        key?: string;
+        level?: string;
+    }>;
+};
+export type OnePasswordDiagnosePayload = OnePasswordCheckPayload & {
+    resolverConfig: Record<string, unknown>;
+    resolverProvenance: Record<string, {
+        value: unknown;
+        source: string;
+        notes: string[];
+    }>;
+    resolverIssues: ConfigIssue[];
+    policy: {
+        defaultVault: string;
+        vaultPolicy: string;
+        vaultWhitelistCount: number;
+        allowedIdRegexState: "unset" | "configured" | "fail-closed";
+    };
 };
 type SafeWriteFsOps = {
     openSync: typeof openSync;

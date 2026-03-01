@@ -608,6 +608,219 @@ describe("command cli", () => {
     expect(parsed.resolverProvenance.defaultVault).toBeDefined();
   });
 
+  it("onepassword check --json reports readiness without leaking token", async () => {
+    const streams = createStreams();
+    const token = "op_secret_token_for_onepassword_check";
+    const code = await runCli(["onepassword", "check", "--json"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: token
+      },
+      streams,
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
+    });
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      status: string;
+      tokenPresent: boolean;
+      sdkStatus: string;
+      config: { valid: boolean };
+      probe: { requested: boolean; status: string; reason: string };
+    };
+    expect(parsed.status).toBe("clean");
+    expect(parsed.tokenPresent).toBe(true);
+    expect(parsed.sdkStatus).toBe("ok");
+    expect(parsed.config.valid).toBe(true);
+    expect(parsed.probe.requested).toBe(false);
+    expect(streams.out.stdout.includes(token)).toBe(false);
+  });
+
+  it("onepassword check returns error for missing token and runtime for sdk init failure", async () => {
+    const missingTokenStreams = createStreams();
+    const missingTokenCode = await runCli(["onepassword", "check", "--json"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: missingTokenStreams,
+      runResolver: async () => undefined
+    });
+    expect(missingTokenCode).toBe(EXIT_POLICY.ERROR);
+    const missingParsed = JSON.parse(missingTokenStreams.out.stdout) as { status: string };
+    expect(missingParsed.status).toBe("error");
+
+    const sdkFailStreams = createStreams();
+    const sdkFailCode = await runCli(["onepassword", "check", "--json"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams: sdkFailStreams,
+      runResolver: async () => undefined,
+      createResolver: async () => {
+        throw new Error("sdk-down");
+      }
+    });
+    expect(sdkFailCode).toBe(EXIT_POLICY.RUNTIME);
+    const sdkFailParsed = JSON.parse(sdkFailStreams.out.stdout) as { status: string };
+    expect(sdkFailParsed.status).toBe("runtime-error");
+  });
+
+  it("onepassword check --check returns findings for unresolved probe", async () => {
+    const streams = createStreams();
+    const code = await runCli(["onepassword", "check", "--json", "--check", "--probe-id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      resolver: {
+        resolveRefs: async () => new Map<string, string>()
+      }
+    });
+    expect(code).toBe(EXIT_POLICY.FINDINGS);
+    const parsed = JSON.parse(streams.out.stdout) as { status: string; probe: { status: string; reason: string } };
+    expect(parsed.status).toBe("findings");
+    expect(parsed.probe.status).toBe("unresolved");
+    expect(parsed.probe.reason).toBe("sdk-unresolved");
+  });
+
+  it("onepassword check probe resolved/unresolved reasons are safe and deterministic", async () => {
+    const resolvedStreams = createStreams();
+    const resolvedCode = await runCli(["onepassword", "check", "--json", "--probe-id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams: resolvedStreams,
+      runResolver: async () => undefined,
+      resolver: {
+        resolveRefs: async (refs: string[]) => new Map([[refs[0], "very-secret-value"]])
+      }
+    });
+    expect(resolvedCode).toBe(EXIT_POLICY.OK);
+    expect(resolvedStreams.out.stdout.includes("very-secret-value")).toBe(false);
+    const resolvedParsed = JSON.parse(resolvedStreams.out.stdout) as {
+      probe: { requested: boolean; status: string; reason: string };
+    };
+    expect(resolvedParsed.probe.requested).toBe(true);
+    expect(resolvedParsed.probe.status).toBe("resolved");
+    expect(resolvedParsed.probe.reason).toBe("resolved");
+
+    const policyBlockedStreams = createStreams();
+    const policyBlockedCode = await runCli(
+      ["onepassword", "check", "--json", "--probe-id", "op://OtherVault/Item/field"],
+      {
+        env: {
+          HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+          OP_SERVICE_ACCOUNT_TOKEN: "token"
+        },
+        streams: policyBlockedStreams,
+        runResolver: async () => undefined,
+        resolver: {
+          resolveRefs: async () => new Map<string, string>()
+        }
+      }
+    );
+    expect(policyBlockedCode).toBe(EXIT_POLICY.OK);
+    const policyBlockedParsed = JSON.parse(policyBlockedStreams.out.stdout) as {
+      probe: { status: string; reason: string };
+    };
+    expect(policyBlockedParsed.probe.status).toBe("filtered");
+    expect(policyBlockedParsed.probe.reason).toBe("policy-blocked");
+
+    const invalidRefStreams = createStreams();
+    const invalidRefCode = await runCli(["onepassword", "check", "--json", "--probe-id", "bad\nid"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams: invalidRefStreams,
+      runResolver: async () => undefined,
+      createResolver: async () => ({
+        resolveRefs: async () => new Map<string, string>()
+      })
+    });
+    expect(invalidRefCode).toBe(EXIT_POLICY.OK);
+    const invalidRefParsed = JSON.parse(invalidRefStreams.out.stdout) as { probe: { status: string; reason: string } };
+    expect(invalidRefParsed.probe.status).toBe("filtered");
+    expect(invalidRefParsed.probe.reason).toBe("invalid-ref");
+  });
+
+  it("onepassword diagnose --json includes resolver internals and policy summary", async () => {
+    const streams = createStreams();
+    const code = await runCli(["onepassword", "diagnose", "--json", "--probe-id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      runResolver: async () => undefined,
+      resolver: {
+        resolveRefs: async (refs: string[]) => new Map([[refs[0], "hidden-secret"]])
+      }
+    });
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      resolverConfig: Record<string, unknown>;
+      resolverProvenance: Record<string, unknown>;
+      resolverIssues: unknown[];
+      policy: { defaultVault: string; vaultPolicy: string; vaultWhitelistCount: number; allowedIdRegexState: string };
+    };
+    expect(parsed.resolverConfig.defaultVault).toBe("MainVault");
+    expect(parsed.resolverProvenance.defaultVault).toBeDefined();
+    expect(Array.isArray(parsed.resolverIssues)).toBe(true);
+    expect(parsed.policy.defaultVault).toBe("MainVault");
+    expect(parsed.policy.vaultPolicy).toBe("default_vault");
+    expect(typeof parsed.policy.vaultWhitelistCount).toBe("number");
+    expect(typeof parsed.policy.allowedIdRegexState).toBe("string");
+    expect(streams.out.stdout.includes("hidden-secret")).toBe(false);
+  });
+
+  it("onepassword snippet outputs minimal/full json and enforces defaultVault requirement", async () => {
+    const missingStreams = createStreams();
+    const missingCode = await runCli(["onepassword", "snippet"], {
+      env: {},
+      streams: missingStreams,
+      runResolver: async () => undefined
+    });
+    expect(missingCode).toBe(EXIT_POLICY.ERROR);
+    expect(missingStreams.out.stderr).toContain("defaultVault is required");
+
+    const minimalStreams = createStreams();
+    const minimalCode = await runCli(["onepassword", "snippet", "--default-vault", "VaultOne"], {
+      env: {},
+      streams: minimalStreams,
+      runResolver: async () => undefined
+    });
+    expect(minimalCode).toBe(EXIT_POLICY.OK);
+    const minimalParsed = JSON.parse(minimalStreams.out.stdout) as Record<string, unknown>;
+    expect(minimalParsed.defaultVault).toBe("VaultOne");
+    expect(minimalParsed.vaultPolicy).toBe("default_vault");
+
+    const fallbackStreams = createStreams();
+    const fallbackCode = await runCli(["onepassword", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "ExistingVault", vaultPolicy: "default_vault" }) },
+      streams: fallbackStreams,
+      runResolver: async () => undefined
+    });
+    expect(fallbackCode).toBe(EXIT_POLICY.OK);
+    const fallbackParsed = JSON.parse(fallbackStreams.out.stdout) as Record<string, unknown>;
+    expect(fallbackParsed.defaultVault).toBe("ExistingVault");
+
+    const fullStreams = createStreams();
+    const fullCode = await runCli(["onepassword", "snippet", "--full"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "FullVault", vaultPolicy: "default_vault" }) },
+      streams: fullStreams,
+      runResolver: async () => undefined
+    });
+    expect(fullCode).toBe(EXIT_POLICY.OK);
+    const fullParsed = JSON.parse(fullStreams.out.stdout) as Record<string, unknown>;
+    expect(fullParsed.defaultVault).toBe("FullVault");
+    expect(fullParsed.maxIds).toBeDefined();
+  });
+
   it("resolve returns redacted values by default", async () => {
     const streams = createStreams();
     const resolver: SecretResolver = {
@@ -987,6 +1200,15 @@ describe("command cli", () => {
     });
     expect(unknownOpenclawSubcommandCode).toBe(EXIT_POLICY.ERROR);
     expect(unknownOpenclawSubcommandStreams.out.stderr).toContain("Unknown openclaw subcommand");
+
+    const unknownOnepasswordSubcommandStreams = createStreams();
+    const unknownOnepasswordSubcommandCode = await runCli(["onepassword", "bad-subcommand"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: unknownOnepasswordSubcommandStreams,
+      runResolver: async () => undefined
+    });
+    expect(unknownOnepasswordSubcommandCode).toBe(EXIT_POLICY.ERROR);
+    expect(unknownOnepasswordSubcommandStreams.out.stderr).toContain("Unknown onepassword subcommand");
   });
 
   it("routes to resolver mode when invoked with no command arguments", async () => {
