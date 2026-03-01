@@ -15,6 +15,18 @@ Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that reso
 - Strict caps for `stdin` size, id count, timeout, and concurrency.
 - No secret logging in CLI mode; `resolve` output is redacted by default.
 
+## Install
+
+```bash
+pnpm add -g openclaw-1p-sdk-resolver
+```
+
+Verify:
+
+```bash
+openclaw-1p-sdk-resolver --help
+```
+
 ## Quick Start (2 Minutes)
 
 Assumes `openclaw-1p-sdk-resolver` is installed and available on your `PATH`.
@@ -331,7 +343,7 @@ Current source layout is intentionally small and split by responsibility:
 - Vault access is constrained by configured `vaultPolicy` (unless set to `"any"`).
 - This process necessarily places resolved secrets on stdout in the protocol response; stdout/stderr transcripts must be treated as sensitive.
 
-## Install
+## Development Setup
 
 ```bash
 pnpm install

@@ -1,9 +1,9 @@
 {
   "name": "openclaw-1p-sdk-resolver",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "OpenClaw exec secrets provider backed by 1Password SDK",
   "type": "module",
-  "private": true,
+  "private": false,
   "files": [
     "bin",
     "dist",
