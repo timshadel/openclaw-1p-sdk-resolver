@@ -1,0 +1,13 @@
+# Security-sensitive resolver surfaces
+/src/resolver.ts @timshadel
+/src/onepassword.ts @timshadel
+/src/protocol.ts @timshadel
+/src/sanitize.ts @timshadel
+/src/openclaw.ts @timshadel
+/src/cli.ts @timshadel
+
+# Workflow and process governance
+/.github/workflows/* @timshadel
+/AGENTS.md @timshadel
+/docs/adrs/* @timshadel
+/docs/plans/* @timshadel

@@ -16,6 +16,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=json-summary",
+    "check:coverage": "node scripts/check-coverage-thresholds.mjs",
+    "check:docs": "node scripts/check-readme-help-sync.mjs && node scripts/check-doc-comment-consistency.mjs",
+    "check:governance": "node scripts/check-plan-adr-required.mjs",
+    "ci:preflight": "pnpm build && pnpm test && pnpm test:coverage && pnpm check:coverage && pnpm check:docs && pnpm check:governance",
     "prepack": "pnpm build"
   },
   "engines": {

@@ -72,3 +72,4 @@ Use [`TEMPLATE.md`](./TEMPLATE.md) for new ADRs.
 - [`010-quality-gates-and-coverage-policy.md`](./010-quality-gates-and-coverage-policy.md)
 - [`011-diagnostics-command-cohesion-and-flag-model.md`](./011-diagnostics-command-cohesion-and-flag-model.md)
 - [`012-resolver-security-boundary-and-invariants.md`](./012-resolver-security-boundary-and-invariants.md)
+- [`013-ci-security-and-ai-review-governance.md`](./013-ci-security-and-ai-review-governance.md)
