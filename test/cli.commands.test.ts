@@ -779,12 +779,14 @@ describe("command cli", () => {
     });
     expect(resolvedCode).toBe(EXIT_POLICY.OK);
     expect(resolvedStreams.out.stdout.includes("very-secret-value")).toBe(false);
+    expect(resolvedStreams.out.stdout.includes("MyAPI/token")).toBe(false);
     const resolvedParsed = JSON.parse(resolvedStreams.out.stdout) as {
-      probe: { requested: boolean; status: string; reason: string };
+      probe: { requested: boolean; status: string; reason: string; id?: string };
     };
     expect(resolvedParsed.probe.requested).toBe(true);
     expect(resolvedParsed.probe.status).toBe("resolved");
     expect(resolvedParsed.probe.reason).toBe("resolved");
+    expect(resolvedParsed.probe.id).toBeUndefined();
 
     const policyBlockedStreams = createStreams();
     const policyBlockedCode = await runCli(
@@ -824,6 +826,40 @@ describe("command cli", () => {
     const invalidRefParsed = JSON.parse(invalidRefStreams.out.stdout) as { probe: { status: string; reason: string } };
     expect(invalidRefParsed.probe.status).toBe("filtered");
     expect(invalidRefParsed.probe.reason).toBe("invalid-ref");
+  });
+
+  it("1password check only includes probe id in --debug mode", async () => {
+    const nonDebugStreams = createStreams();
+    const nonDebugCode = await runCli(["1password", "check", "--json", "--probe-id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams: nonDebugStreams,
+      runResolver: async () => undefined,
+      resolver: {
+        resolveRefs: async (refs: string[]) => new Map([[refs[0], "hidden"]])
+      }
+    });
+    expect(nonDebugCode).toBe(EXIT_POLICY.OK);
+    const nonDebugParsed = JSON.parse(nonDebugStreams.out.stdout) as { probe: { id?: string } };
+    expect(nonDebugParsed.probe.id).toBeUndefined();
+
+    const debugStreams = createStreams();
+    const debugCode = await runCli(["1password", "check", "--json", "--debug", "--probe-id", "MyAPI/token"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams: debugStreams,
+      runResolver: async () => undefined,
+      resolver: {
+        resolveRefs: async (refs: string[]) => new Map([[refs[0], "hidden"]])
+      }
+    });
+    expect(debugCode).toBe(EXIT_POLICY.OK);
+    const debugParsed = JSON.parse(debugStreams.out.stdout) as { probe: { id?: string } };
+    expect(debugParsed.probe.id).toBe("MyAPI/token");
   });
 
   it("1password check --details --json includes resolver internals and policy summary", async () => {

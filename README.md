@@ -137,7 +137,7 @@ Notes:
 - `1password check` is the high-signal 1Password readiness command:
   - validates resolver config
   - checks token presence and SDK init status
-  - optionally probes a specific id/ref safely via `--probe-id` (never prints values)
+  - optionally probes a specific id/ref safely via `--probe-id` (never prints values; probe id echoed only with `--debug`)
 - `1password check --details` provides deep resolver and policy diagnostics.
 - `--strict` turns findings into non-zero exit code (`1`) for automation gating.
 - `1password snippet` prints resolver config JSON only on `stdout` (minimal by default, full config with `--full`).
