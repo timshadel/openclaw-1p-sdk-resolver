@@ -243,9 +243,16 @@ function shouldPrintSnippetInstructions(flags: Map<string, string[]>, streams: C
   return Boolean((streams.stderr as NodeJS.WriteStream).isTTY);
 }
 
-function printSnippetInstructions(stream: NodeJS.WritableStream, lines: string[]): void {
+function printSnippetInstructions(
+  stream: NodeJS.WritableStream,
+  lines: string[],
+  options?: { trailingBlankLine?: boolean }
+): void {
   for (const line of lines) {
     stream.write(`${line}\n`);
+  }
+  if (options?.trailingBlankLine) {
+    stream.write("\n");
   }
 }
 
@@ -938,10 +945,11 @@ function runConfigInit(args: string[], context: CliExecutionContext): ExitResult
 }
 
 function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitResult {
-  const { streams, entryScriptPath } = context;
+  const { streams, entryScriptPath, env } = context;
   const { flags } = parseFlags(args);
   const providerAlias = getStringFlag(flags, "provider") ?? DEFAULT_OPENCLAW_PROVIDER_ALIAS;
   const commandOverride = getStringFlag(flags, "command");
+  const openclawPathResolution = resolveOpenclawConfigPath({ env });
 
   const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
   const commandHint =
@@ -953,8 +961,10 @@ function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitR
   if (shouldPrintSnippetInstructions(flags, streams)) {
     printSnippetInstructions(streams.stderr, [
       "Paste this JSON into secrets.providers in your OpenClaw config.",
+      `Likely OpenClaw config path: ${openclawPathResolution.path ?? "unresolved"}`,
+      `Path source: ${openclawPathResolution.source} (${openclawPathResolution.reason})`,
       "This tool does not edit OpenClaw files."
-    ]);
+    ], { trailingBlankLine: true });
   }
 
   const snippet = buildResolverProviderSnippet({ commandHint, providerAlias });

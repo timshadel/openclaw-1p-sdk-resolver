@@ -500,6 +500,9 @@ describe("command cli", () => {
     expect(code).toBe(EXIT_POLICY.OK);
     expect(() => JSON.parse(out)).not.toThrow();
     expect(err).toContain("Paste this JSON into secrets.providers");
+    expect(err).toContain("Likely OpenClaw config path:");
+    expect(err).toContain("Path source: HOME (Using HOME/.openclaw/openclaw.json.)");
+    expect(err.endsWith("\n\n")).toBe(true);
   });
 
   it("openclaw snippet supports --explain and --quiet precedence", async () => {
@@ -511,6 +514,9 @@ describe("command cli", () => {
     });
     expect(explainCode).toBe(EXIT_POLICY.OK);
     expect(explainStreams.out.stderr).toContain("This tool does not edit OpenClaw files.");
+    expect(explainStreams.out.stderr).toContain("Likely OpenClaw config path:");
+    expect(explainStreams.out.stderr).toContain("Path source: HOME (Using HOME/.openclaw/openclaw.json.)");
+    expect(explainStreams.out.stderr.endsWith("\n\n")).toBe(true);
 
     const ttyIn = new PassThrough() as PassThrough & { isTTY?: boolean };
     const ttyOut = new PassThrough() as PassThrough & { isTTY?: boolean };

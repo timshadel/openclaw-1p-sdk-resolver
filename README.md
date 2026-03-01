@@ -136,6 +136,8 @@ Notes:
   - default: only when `stderr` is a TTY
   - `--explain`: force instructions on `stderr`
   - `--quiet`: suppress instructions (`--quiet` wins over `--explain`)
+  - includes likely OpenClaw config path and path-source reasoning for paste guidance
+  - includes a blank separator line after instructions for readability
 - `resolve` is redacted by default and never prints secret values unless `--reveal` is used.
 - `resolve --debug` adds safe reason codes for unresolved ids (for example `policy-blocked`, `invalid-ref`, `sdk-unresolved`) without revealing secrets.
 - `resolve --reveal` requires explicit consent:
@@ -182,6 +184,7 @@ The snippet includes:
 - `trustedDirs` suggestions
 - This tool never edits OpenClaw files; paste snippet output manually.
 - Snippet JSON is always written to `stdout`; optional guidance is written to `stderr`.
+- Guidance includes likely OpenClaw config path and path-source reasoning.
 
 ## Two-Sided Checks
 
