@@ -110,6 +110,18 @@ function hasFlag(flags: Map<string, string[]>, name: string): boolean {
   return flags.has(name) && isTruthyFlag(getLastFlag(flags, name));
 }
 
+function getStringFlag(flags: Map<string, string[]>, name: string): string | undefined {
+  if (!flags.has(name)) {
+    return undefined;
+  }
+  const raw = getLastFlag(flags, name);
+  if (!raw || raw === "true") {
+    return undefined;
+  }
+  const value = raw.trim();
+  return value.length > 0 ? value : undefined;
+}
+
 function toSerializableConfig(config: EffectiveConfig["config"]): Record<string, unknown> {
   return {
     ...config,
@@ -144,7 +156,7 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver doctor [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config path [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver config init [--write] [--force] [--json]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--reveal --yes]\n`);
 }
@@ -601,6 +613,7 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
   const doWrite = hasFlag(flags, "write");
   const force = hasFlag(flags, "force");
   const asJson = hasFlag(flags, "json");
+  const defaultVaultFromFlag = getStringFlag(flags, "default-vault");
 
   const effective = loadEffectiveConfig({ env });
   if (!effective.path.path) {
@@ -608,8 +621,20 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
     return { code: 2 };
   }
 
+  const hasExistingConfigDefaultVault =
+    effective.file.loaded && effective.provenance.defaultVault.source === "config-file";
+  const selectedDefaultVault =
+    defaultVaultFromFlag ?? (hasExistingConfigDefaultVault ? effective.config.defaultVault : undefined);
+
+  if (!selectedDefaultVault) {
+    streams.stderr.write(
+      "defaultVault is required. Pass --default-vault <name>, or keep an existing config file with defaultVault.\n"
+    );
+    return { code: 2 };
+  }
+
   const minimalConfig = {
-    defaultVault: "default",
+    defaultVault: selectedDefaultVault,
     vaultPolicy: "default_vault"
   };
   const body = `${JSON.stringify(minimalConfig, null, 2)}\n`;
@@ -627,6 +652,8 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
     streams.stdout.write(
       renderTwoColumnTable("CONFIG INITIALIZATION", [
         ["Path", effective.path.path],
+        ["Default Vault", selectedDefaultVault],
+        ["Default Vault Source", defaultVaultFromFlag ? "flag" : "existing-config"],
         ["Dry Run", !doWrite ? "yes" : "no"],
         ["Write Requested", doWrite ? "yes" : "no"],
         ["Overwrite Requested", force ? "yes" : "no"]
@@ -635,7 +662,7 @@ function runConfigInit(args: string[], runtime: CliRuntime): ExitResult {
     if (!doWrite) {
       streams.stdout.write(
         renderTwoColumnTable("MINIMAL CONFIG CONTENT", [
-          ["defaultVault", "default"],
+          ["defaultVault", selectedDefaultVault],
           ["vaultPolicy", "default_vault"]
         ])
       );

@@ -94,7 +94,7 @@ describe("command cli", () => {
     expect(streams.out.stdout).toContain("| -");
   });
 
-  it("config init is dry-run by default and writes only with --write, respecting --force", async () => {
+  it("config init requires --default-vault when no existing config and writes with --force rules", async () => {
     const home = path.join(tmpdir(), `onep-cli-init-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const configPath = path.join(home, ".config", "openclaw-1p-sdk-resolver", "config.json");
 
@@ -104,11 +104,12 @@ describe("command cli", () => {
       streams: dryRunStreams,
       runResolver: async () => undefined
     });
-    expect(dryRunCode).toBe(0);
+    expect(dryRunCode).toBe(2);
+    expect(dryRunStreams.out.stderr).toContain("defaultVault is required");
     expect(existsSync(configPath)).toBe(false);
 
     const writeStreams = createStreams();
-    const writeCode = await runCli(["config", "init", "--write"], {
+    const writeCode = await runCli(["config", "init", "--default-vault", "MainVault", "--write"], {
       env: { HOME: home },
       streams: writeStreams,
       runResolver: async () => undefined
@@ -117,7 +118,7 @@ describe("command cli", () => {
     expect(existsSync(configPath)).toBe(true);
 
     const failOverwriteStreams = createStreams();
-    const failOverwriteCode = await runCli(["config", "init", "--write"], {
+    const failOverwriteCode = await runCli(["config", "init", "--default-vault", "MainVault", "--write"], {
       env: { HOME: home },
       streams: failOverwriteStreams,
       runResolver: async () => undefined
@@ -125,15 +126,44 @@ describe("command cli", () => {
     expect(failOverwriteCode).toBe(2);
 
     const forceOverwriteStreams = createStreams();
-    const forceOverwriteCode = await runCli(["config", "init", "--write", "--force"], {
-      env: { HOME: home },
-      streams: forceOverwriteStreams,
-      runResolver: async () => undefined
-    });
+    const forceOverwriteCode = await runCli(
+      ["config", "init", "--default-vault", "MainVault", "--write", "--force"],
+      {
+        env: { HOME: home },
+        streams: forceOverwriteStreams,
+        runResolver: async () => undefined
+      }
+    );
+
     expect(forceOverwriteCode).toBe(0);
 
     const parsed = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
-    expect(parsed.defaultVault).toBe("default");
+    expect(parsed.defaultVault).toBe("MainVault");
+    expect(parsed.vaultPolicy).toBe("default_vault");
+  });
+
+  it("config init can reuse existing config defaultVault when flag is omitted", async () => {
+    const home = createHomeWithConfig({ defaultVault: "ExistingVault", vaultPolicy: "default_vault" });
+    const configPath = path.join(home, ".config", "openclaw-1p-sdk-resolver", "config.json");
+
+    const dryRunStreams = createStreams();
+    const dryRunCode = await runCli(["config", "init"], {
+      env: { HOME: home },
+      streams: dryRunStreams,
+      runResolver: async () => undefined
+    });
+    expect(dryRunCode).toBe(0);
+    expect(dryRunStreams.out.stdout).toContain("ExistingVault");
+
+    const writeStreams = createStreams();
+    const writeCode = await runCli(["config", "init", "--write", "--force"], {
+      env: { HOME: home },
+      streams: writeStreams,
+      runResolver: async () => undefined
+    });
+    expect(writeCode).toBe(0);
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    expect(parsed.defaultVault).toBe("ExistingVault");
     expect(parsed.vaultPolicy).toBe("default_vault");
   });
 
@@ -301,7 +331,7 @@ describe("command cli", () => {
     symlinkSync(realTargetPath, configPath);
 
     const streams = createStreams();
-    const code = await runCli(["config", "init", "--write", "--force"], {
+    const code = await runCli(["config", "init", "--default-vault", "MainVault", "--write", "--force"], {
       env: { HOME: home },
       streams,
       runResolver: async () => undefined
