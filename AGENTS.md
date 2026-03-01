@@ -163,6 +163,20 @@ Exceptions (ADR not required):
 - Comment-only cleanup.
 - Behavior-neutral tests.
 
+Agents must treat all `accepted` ADRs in `docs/adrs/` as active constraints when:
+
+- implementing changes,
+- proposing plans,
+- reviewing architecture tradeoffs.
+
+If a change conflicts with an active ADR, the agent must:
+
+1) Call out the conflict explicitly.
+2) Propose either:
+   - a compliant alternative, or
+   - an ADR update/supersession path.
+3) Avoid silently violating ADR constraints.
+
 Agents in forks:
 - Do not add new runtime dependencies without justification.
 - Pin deps via lockfile.
