@@ -1076,7 +1076,15 @@ async function analyzeOnePasswordSetup(args, context, runtime) {
                 errors: summary.errors,
                 warnings: summary.warnings
             },
-            probe: debug ? probe : { ...probe, ...(probe.requested ? { id: probe.id } : {}) },
+            // Keep probe identifiers out of standard diagnostics output.
+            // Raw probe ids are only included when explicit debug mode is requested.
+            probe: debug
+                ? probe
+                : {
+                    requested: probe.requested,
+                    status: probe.status,
+                    reason: probe.reason
+                },
             issues
         },
         effective,
