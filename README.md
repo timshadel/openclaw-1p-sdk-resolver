@@ -159,6 +159,7 @@ Current source layout is intentionally small and split by responsibility:
 - `src/onepassword.ts`
   - Thin adapter over `@1password/sdk` using service account auth.
   - Uses `resolveAll` when available, otherwise concurrency-limited `resolve`.
+  - Falls back to per-ref `resolve` when bulk payloads are unsupported/empty.
   - Returns partial success maps; unresolved refs are omitted.
 - `src/cli.ts`
   - Handles subcommand routing (`doctor`, `config`, `openclaw`, `resolve`).
@@ -260,6 +261,7 @@ This only returns values when `OP_SERVICE_ACCOUNT_TOKEN` is set and the target s
 - Never log resolved secret values.
 - Never log raw stdin.
 - Never pass service account token via CLI args or files.
+- `config init --write` uses no-follow safe writes and refuses symlink paths.
 - Resolver should emit secrets only in protocol JSON on stdout.
 - Errors are treated as unresolved (empty values) to avoid leaking details.
 
