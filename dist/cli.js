@@ -110,9 +110,12 @@ function shouldPrintSnippetInstructions(flags, streams) {
     }
     return Boolean(streams.stderr.isTTY);
 }
-function printSnippetInstructions(stream, lines) {
+function printSnippetInstructions(stream, lines, options) {
     for (const line of lines) {
         stream.write(`${line}\n`);
+    }
+    if (options?.trailingBlankLine) {
+        stream.write("\n");
     }
 }
 function printUsage(stream) {
@@ -680,10 +683,11 @@ function runConfigInit(args, context) {
     return { code: EXIT_POLICY.OK };
 }
 function runOpenclawSnippet(args, context) {
-    const { streams, entryScriptPath } = context;
+    const { streams, entryScriptPath, env } = context;
     const { flags } = parseFlags(args);
     const providerAlias = getStringFlag(flags, "provider") ?? DEFAULT_OPENCLAW_PROVIDER_ALIAS;
     const commandOverride = getStringFlag(flags, "command");
+    const openclawPathResolution = resolveOpenclawConfigPath({ env });
     const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
     const commandHint = commandOverride ??
         (path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
@@ -692,8 +696,10 @@ function runOpenclawSnippet(args, context) {
     if (shouldPrintSnippetInstructions(flags, streams)) {
         printSnippetInstructions(streams.stderr, [
             "Paste this JSON into secrets.providers in your OpenClaw config.",
+            `Likely OpenClaw config path: ${openclawPathResolution.path ?? "unresolved"}`,
+            `Path source: ${openclawPathResolution.source} (${openclawPathResolution.reason})`,
             "This tool does not edit OpenClaw files."
-        ]);
+        ], { trailingBlankLine: true });
     }
     const snippet = buildResolverProviderSnippet({ commandHint, providerAlias });
     printJson(streams.stdout, snippet);
