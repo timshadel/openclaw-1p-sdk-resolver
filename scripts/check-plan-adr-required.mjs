@@ -1,39 +1,16 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { execSync } from "node:child_process";
+import { listChangedFiles, resolveDiffBaseRef } from "./lib/git-changes.mjs";
 
 const mode = process.env.QUALITY_GATES_MODE === "enforce" ? "enforce" : "observe";
 
-function listChangedFiles() {
-  const explicit = process.env.GOVERNANCE_BASE_REF;
-  const baseRef = explicit || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "");
-  const cmd = baseRef
-    ? `git diff --name-only --diff-filter=ACMR ${baseRef}...HEAD`
-    : "git diff --name-only --diff-filter=ACMR";
-  try {
-    const out = execSync(cmd, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const tracked = out
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const untracked = execSync("git ls-files --others --exclude-standard", {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    })
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return [...new Set([...tracked, ...untracked])];
-  } catch {
-    return [];
-  }
-}
+const baseRef = resolveDiffBaseRef({
+  explicitBaseRef: process.env.GOVERNANCE_BASE_REF,
+  githubEventName: process.env.GITHUB_EVENT_NAME,
+  githubBaseRef: process.env.GITHUB_BASE_REF,
+  githubEventBefore: process.env.GITHUB_EVENT_BEFORE
+});
 
 function hasPath(paths, re) {
   return paths.some((p) => re.test(p));
@@ -48,7 +25,7 @@ function appendSummary(lines) {
   process.stdout.write(text);
 }
 
-const changed = listChangedFiles();
+const changed = listChangedFiles(baseRef);
 const lines = ["## Plan/ADR Governance Gate", "", `- Mode: \`${mode}\``];
 
 if (changed.length === 0) {

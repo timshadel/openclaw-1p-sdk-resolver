@@ -49,6 +49,16 @@ jobs:
           QUALITY_GATES_MODE: observe
         run: pnpm check:docs
 
+      - name: Determine governance base ref
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "GOVERNANCE_BASE_REF=origin/${{ github.base_ref }}" >> "$GITHUB_ENV"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            echo "GOVERNANCE_BASE_REF=${{ github.event.before }}" >> "$GITHUB_ENV"
+          else
+            echo "GOVERNANCE_BASE_REF=HEAD~1" >> "$GITHUB_ENV"
+          fi
+
       - name: Governance gate (observe mode)
         env:
           QUALITY_GATES_MODE: observe

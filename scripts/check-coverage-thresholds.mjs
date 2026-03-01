@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import { execSync } from "node:child_process";
+import { listChangedFiles, resolveDiffBaseRef } from "./lib/git-changes.mjs";
 
 const mode = process.env.QUALITY_GATES_MODE === "enforce" ? "enforce" : "observe";
 const minLines = Number(process.env.COVERAGE_MIN_LINES ?? "93");
@@ -26,35 +26,12 @@ function writeSummary(lines) {
   process.stdout.write(summary);
 }
 
-function changedFiles() {
-  const explicit = process.env.COVERAGE_BASE_REF;
-  const baseRef = explicit || (process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "");
-  const cmd = baseRef
-    ? `git diff --name-only --diff-filter=ACMR ${baseRef}...HEAD`
-    : "git diff --name-only --diff-filter=ACMR";
-  try {
-    const out = execSync(cmd, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const tracked = out
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const untracked = execSync("git ls-files --others --exclude-standard", {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    })
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return [...new Set([...tracked, ...untracked])];
-  } catch {
-    return [];
-  }
-}
+const baseRef = resolveDiffBaseRef({
+  explicitBaseRef: process.env.COVERAGE_BASE_REF,
+  githubEventName: process.env.GITHUB_EVENT_NAME,
+  githubBaseRef: process.env.GITHUB_BASE_REF,
+  githubEventBefore: process.env.GITHUB_EVENT_BEFORE
+});
 
 function getCoverageEntry(summary, file) {
   if (summary[file]) {
@@ -113,7 +90,7 @@ if (baseline?.overall) {
   }
 }
 
-const changed = changedFiles().filter((file) => file.startsWith("src/") && file.endsWith(".ts"));
+const changed = listChangedFiles(baseRef).filter((file) => file.startsWith("src/") && file.endsWith(".ts"));
 if (changed.length === 0) {
   warnings.push("No changed TypeScript source files detected for per-file regression checks.");
 }
