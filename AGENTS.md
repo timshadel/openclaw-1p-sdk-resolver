@@ -11,7 +11,8 @@ This file is written for:
 ## Non-negotiable safety rules (read first)
 
 1) **Never print secrets**
-   - Do not log resolved secret values (stdout OR stderr).
+   - Do not log resolved secret values to stdout/stderr by default.
+   - Exception: explicit operator-invoked debug/reveal flows may print secret values only when intentionally gated (for example `resolve --reveal --yes`).
    - Do not write secrets to disk.
    - Do not paste secrets into issues, PR descriptions, commit messages, or test snapshots.
 
@@ -36,6 +37,14 @@ This file is written for:
 ### Runtime mode (OpenClaw exec provider, jsonOnly)
 - Input (stdin): JSON request with `protocolVersion` and `ids`.
 - Output (stdout): JSON response with `protocolVersion` and `values`.
+
+### CLI mode (diagnostics and setup)
+- Human/operator commands for safe configuration checks and setup guidance.
+- Includes command families for:
+  - `openclaw ...` (provider/config integration checks)
+  - `onepassword ...` (resolver readiness/policy checks)
+  - `config ...` and `doctor` (resolver config and health)
+- Must remain safe-by-default (no secret values unless explicitly requested with gated reveal behavior).
 
 ### ID mapping rule
 - Vault comes from config `defaultVault` (legacy `vault` key still supported)
@@ -82,8 +91,9 @@ Create/keep these modules separated:
 
 - `src/resolver/*`  
   Orchestrates: parse → sanitize → map ids → resolve → emit response.
+  - Includes CLI entrypoint routing (no-arg resolver mode vs command mode).
 
-No other module may print/log secret values.
+No other module may print/log secret values by default.
 
 ---
 

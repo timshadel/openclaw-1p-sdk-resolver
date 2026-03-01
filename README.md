@@ -208,7 +208,7 @@ Current source layout is intentionally small and split by responsibility:
   - Falls back to per-ref `resolve` when bulk payloads are unsupported/empty.
   - Returns partial success maps; unresolved refs are omitted.
 - `src/cli.ts`
-  - Handles subcommand routing (`doctor`, `config`, `openclaw`, `resolve`).
+  - Handles subcommand routing (`doctor`, `config`, `openclaw`, `onepassword`, `resolve`).
   - Keeps CLI output safe-by-default (no secret values unless explicit reveal).
 - `src/openclaw.ts`
   - Resolves OpenClaw config path precedence from env/flags.
