@@ -140,6 +140,29 @@ Exceptions (plan not required):
 - Comment-only cleanup.
 - Tests that do not change behavior contracts.
 
+## ADR Requirement
+
+For architecture-impacting decisions, contributors and agents must add or update an ADR under `docs/adrs/`.
+
+Architecture-impacting decisions include:
+
+- Test coverage threshold policy.
+- Architecture seam and process-boundary decisions.
+- Core module boundary refactors.
+- Output/contract governance policy.
+- Dependency strategy that affects runtime architecture.
+
+For major/public changes:
+
+1) Formal plan in `docs/plans/` first.
+2) ADR when the decision has long-term architectural consequences.
+
+Exceptions (ADR not required):
+
+- Typo-only documentation fixes.
+- Comment-only cleanup.
+- Behavior-neutral tests.
+
 Agents in forks:
 - Do not add new runtime dependencies without justification.
 - Pin deps via lockfile.

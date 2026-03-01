@@ -17,6 +17,13 @@ Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that reso
 This repository tracks substantial implementation plans in [`docs/plans/README.md`](./docs/plans/README.md).
 Use that convention for major/public-facing changes before implementation.
 
+## Architecture Decision Records
+
+This repository tracks durable architecture decisions in [`docs/adrs/README.md`](./docs/adrs/README.md).
+
+- Plans are pre-implementation execution specs.
+- ADRs are durable architecture decisions and rationale.
+
 ## Protocol
 
 Input:
