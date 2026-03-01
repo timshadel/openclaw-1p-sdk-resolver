@@ -15,17 +15,17 @@ Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that reso
 - Strict caps for `stdin` size, id count, timeout, and concurrency.
 - No secret logging in CLI mode; `resolve` output is redacted by default.
 
-## Formal Plans
+## Project Decision Artifacts
 
-This repository tracks substantial implementation plans in [`docs/plans/README.md`](./docs/plans/README.md).
-Use that convention for major/public-facing changes before implementation.
+This repository keeps decision artifacts in two complementary forms:
 
-## Architecture Decision Records
-
-This repository tracks durable architecture decisions in [`docs/adrs/README.md`](./docs/adrs/README.md).
-
-- Plans are pre-implementation execution specs.
-- ADRs are durable architecture decisions and rationale.
+- Formal Plans: [`docs/plans/README.md`](./docs/plans/README.md)
+  - Pre-implementation plans for major/public changes.
+  - For AI-assisted work, this is the record produced in plan mode before execution.
+  - Serves as an evolution log of intended work and acceptance criteria.
+- ADRs: [`docs/adrs/README.md`](./docs/adrs/README.md)
+  - Durable technical and architecture decisions with rationale.
+  - Captures enduring constraints that future plans and implementation must respect.
 
 ## Protocol
 

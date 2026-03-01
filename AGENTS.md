@@ -124,8 +124,11 @@ Include “partial success” tests where only some ids resolve.
 For any major change, or any change that affects public API/CLI/user interface behavior, contributors and agents must:
 
 1) Create or update a formal plan under `docs/plans/`.
+   - For AI-assisted changes, this plan is the output of plan mode before implementation.
 2) Align on the plan before making implementation edits.
 3) Link the plan record in PR notes and/or commit context.
+
+Formal plans are execution records for substantial changes and should reflect the intended work, acceptance criteria, and implemented outcome.
 
 Major/public changes include:
 
