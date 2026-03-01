@@ -100,7 +100,7 @@ openclaw-1p-sdk-resolver config path [--json]
 openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]
 openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]
 openclaw-1p-sdk-resolver openclaw snippet [--json]
-openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--reveal --yes]
+openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--debug] [--reveal --yes]
 ```
 
 Notes:
@@ -114,6 +114,7 @@ Notes:
 - `config init` requires `--default-vault <name>` unless an existing config file is already loaded with `defaultVault`.
 - `config init --write` refuses overwrite unless `--force`.
 - `resolve` is redacted by default and never prints secret values unless `--reveal` is used.
+- `resolve --debug` adds safe reason codes for unresolved ids (for example `policy-blocked`, `invalid-ref`, `sdk-unresolved`) without revealing secrets.
 - `resolve --reveal` requires explicit consent:
   - pass `--yes` for non-interactive runs
   - without `--yes`, an interactive TTY confirmation prompt is required

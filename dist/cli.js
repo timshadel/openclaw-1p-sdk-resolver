@@ -100,7 +100,7 @@ function printUsage(stream) {
     stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
     stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
-    stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--reveal --yes]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`);
 }
 function truncateCell(value, maxWidth) {
     if (value.length <= maxWidth) {
@@ -613,6 +613,7 @@ async function runResolve(args, runtime) {
     const idsFromFlag = flags.get("id") ?? [];
     const fromStdin = hasFlag(flags, "stdin");
     const asJson = hasFlag(flags, "json");
+    const debug = hasFlag(flags, "debug");
     const reveal = hasFlag(flags, "reveal");
     const yes = hasFlag(flags, "yes");
     const effective = loadEffectiveConfig({ env });
@@ -642,16 +643,16 @@ async function runResolve(args, runtime) {
     }
     const refToId = new Map();
     const requestedRefs = [];
-    const skipped = new Set();
+    const unresolvedReasons = new Map();
     for (const id of sanitizedIds) {
         const ref = mapIdToReference(id, effective.config.defaultVault);
         if (!isValidSecretReference(ref)) {
-            skipped.add(id);
+            unresolvedReasons.set(id, "invalid-ref");
             continue;
         }
         const vault = extractVaultFromReference(ref);
         if (!vault) {
-            skipped.add(id);
+            unresolvedReasons.set(id, "invalid-ref");
             continue;
         }
         if (!isVaultAllowed({
@@ -660,14 +661,48 @@ async function runResolve(args, runtime) {
             vaultPolicy: effective.config.vaultPolicy,
             vaultWhitelist: effective.config.vaultWhitelist
         })) {
-            skipped.add(id);
+            unresolvedReasons.set(id, "policy-blocked");
             continue;
         }
         refToId.set(ref, id);
         requestedRefs.push(ref);
     }
     if (requestedRefs.length === 0) {
-        streams.stderr.write("No resolvable ids after validation and policy checks.\n");
+        const rows = sanitizedIds.map((id) => ({
+            id,
+            status: "unresolved",
+            output: unresolvedReasons.get(id) === "policy-blocked" || unresolvedReasons.get(id) === "invalid-ref" ? "filtered" : "missing",
+            reason: unresolvedReasons.get(id) ?? "sdk-unresolved"
+        }));
+        if (asJson) {
+            printJson(streams.stdout, {
+                debug,
+                reveal,
+                results: rows.map((row) => ({
+                    id: row.id,
+                    status: row.status,
+                    output: row.output,
+                    ...(debug ? { reason: row.reason } : {})
+                }))
+            });
+        }
+        else {
+            streams.stdout.write("RESOLVE RESULTS\n");
+            streams.stdout.write(`${renderAsciiTable(debug
+                ? [
+                    { header: "ID", maxWidth: 56 },
+                    { header: "Status", maxWidth: 12 },
+                    { header: "Output", maxWidth: 96 },
+                    { header: "Reason", maxWidth: 24 }
+                ]
+                : [
+                    { header: "ID", maxWidth: 56 },
+                    { header: "Status", maxWidth: 12 },
+                    { header: "Output", maxWidth: 96 }
+                ], debug
+                ? rows.map((row) => [row.id, row.status, row.output, row.reason])
+                : rows.map((row) => [row.id, row.status, row.output]))}\n`);
+        }
         return { code: 1 };
     }
     try {
@@ -679,11 +714,12 @@ async function runResolve(args, runtime) {
             }));
         const resolved = await resolver.resolveRefs(requestedRefs, effective.config.timeoutMs, effective.config.concurrency);
         const rows = sanitizedIds.map((id) => {
-            if (skipped.has(id)) {
+            if (unresolvedReasons.has(id)) {
                 return {
                     id,
                     status: "unresolved",
-                    output: "filtered"
+                    output: "filtered",
+                    reason: unresolvedReasons.get(id) ?? "filtered"
                 };
             }
             const ref = requestedRefs.find((candidateRef) => refToId.get(candidateRef) === id);
@@ -691,36 +727,55 @@ async function runResolve(args, runtime) {
                 return {
                     id,
                     status: "unresolved",
-                    output: "filtered"
+                    output: "filtered",
+                    reason: "internal-mapping-miss"
                 };
             }
             const value = resolved.get(ref);
             if (typeof value !== "string") {
+                unresolvedReasons.set(id, "sdk-unresolved");
                 return {
                     id,
                     status: "unresolved",
-                    output: "missing"
+                    output: "missing",
+                    reason: "sdk-unresolved"
                 };
             }
             return {
                 id,
                 status: "resolved",
-                output: reveal ? value : redactedSummary(value)
+                output: reveal ? value : redactedSummary(value),
+                reason: "resolved"
             };
         });
         if (asJson) {
             printJson(streams.stdout, {
+                debug,
                 reveal,
-                results: rows
+                results: rows.map((row) => ({
+                    id: row.id,
+                    status: row.status,
+                    output: row.output,
+                    ...(debug ? { reason: row.reason } : {})
+                }))
             });
         }
         else {
             streams.stdout.write("RESOLVE RESULTS\n");
-            streams.stdout.write(`${renderAsciiTable([
-                { header: "ID", maxWidth: 56 },
-                { header: "Status", maxWidth: 12 },
-                { header: "Output", maxWidth: 96 }
-            ], rows.map((row) => [row.id, row.status, row.output]))}\n`);
+            streams.stdout.write(`${renderAsciiTable(debug
+                ? [
+                    { header: "ID", maxWidth: 56 },
+                    { header: "Status", maxWidth: 12 },
+                    { header: "Output", maxWidth: 96 },
+                    { header: "Reason", maxWidth: 24 }
+                ]
+                : [
+                    { header: "ID", maxWidth: 56 },
+                    { header: "Status", maxWidth: 12 },
+                    { header: "Output", maxWidth: 96 }
+                ], debug
+                ? rows.map((row) => [row.id, row.status, row.output, row.reason])
+                : rows.map((row) => [row.id, row.status, row.output]))}\n`);
         }
         return {
             code: rows.every((row) => row.status === "resolved") ? 0 : 1

@@ -319,6 +319,60 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes("\t")).toBe(false);
   });
 
+  it("resolve --debug --json includes sdk-unresolved reason without secrets", async () => {
+    const streams = createStreams();
+    const resolver: SecretResolver = {
+      resolveRefs: async () => new Map<string, string>()
+    };
+
+    const code = await runCli(["resolve", "--id", "MyAPI/token", "--json", "--debug"], {
+      env: {
+        HOME: createHomeWithConfig({ defaultVault: "default" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      },
+      streams,
+      resolver,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(1);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      debug: boolean;
+      reveal: boolean;
+      results: Array<{ status: string; output: string; reason?: string }>;
+    };
+    expect(parsed.debug).toBe(true);
+    expect(parsed.reveal).toBe(false);
+    expect(parsed.results[0].status).toBe("unresolved");
+    expect(parsed.results[0].output).toBe("missing");
+    expect(parsed.results[0].reason).toBe("sdk-unresolved");
+  });
+
+  it("resolve --debug reports policy-blocked reason", async () => {
+    const streams = createStreams();
+    const code = await runCli(
+      ["resolve", "--id", "op://OtherVault/Item/field", "--json", "--debug"],
+      {
+        env: {
+          HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+          OP_SERVICE_ACCOUNT_TOKEN: "token"
+        },
+        streams,
+        resolver: {
+          resolveRefs: async () => new Map<string, string>()
+        },
+        runResolver: async () => undefined
+      }
+    );
+
+    expect(code).toBe(1);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      results: Array<{ output: string; reason?: string }>;
+    };
+    expect(parsed.results[0].output).toBe("filtered");
+    expect(parsed.results[0].reason).toBe("policy-blocked");
+  });
+
   it("config init --write refuses to overwrite symlink paths", async () => {
     const home = path.join(tmpdir(), `onep-cli-symlink-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const configDir = path.join(home, ".config", "openclaw-1p-sdk-resolver");
