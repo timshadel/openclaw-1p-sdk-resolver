@@ -1,5 +1,8 @@
 # openclaw-1p-sdk-resolver
 
+> [!NOTE]
+> This resolver design aligns with OpenClaw exec-provider realities and is not 1Password's preferred integration approach. See the detailed analysis: [`Resolver Security Alignment - 1Password Ideal vs OpenClaw Reality`](./docs/reports/resolver-security-alignment-1password-ideal-vs-openclaw-reality.md).
+
 Production-focused OpenClaw `exec` secrets provider (`jsonOnly: true`) that resolves 1Password secret references via the official `@1password/sdk` using service account auth.
 
 ## Features
