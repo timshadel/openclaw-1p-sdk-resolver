@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import {
   closeSync,
   accessSync,
@@ -246,26 +245,22 @@ function shouldPrintSnippetInstructions(flags: Map<string, string[]>, streams: C
 
 function resolveOpenclawResolverCommandHint(entryScriptPath?: string): string {
   const commandName = "openclaw-1p-sdk-resolver";
-
-  try {
-    const whichResult = execFileSync("which", [commandName], { encoding: "utf8" }).trim();
-    if (whichResult.length > 0) {
-      return whichResult;
-    }
-  } catch {
-    // Fall through to entry-script based resolution.
+  if (!entryScriptPath) {
+    return `/path/to/${commandName}`;
   }
 
-  const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
-  if (path.basename(invokedPath) === commandName) {
-    if (invokedPath.includes("/.pnpm/") && invokedPath.includes("/node_modules/openclaw-1p-sdk-resolver/bin/")) {
-      const pnpmHome = path.resolve(invokedPath, "../../../../../../..");
-      return path.join(pnpmHome, commandName);
-    }
-    return invokedPath;
+  const looksAbsolute = path.isAbsolute(entryScriptPath);
+  const resolved = path.resolve(entryScriptPath);
+  const basenameMatches = path.basename(resolved) === commandName;
+  const looksPackageManagerInternal =
+    (resolved.includes("/.pnpm/") && resolved.includes("/node_modules/")) ||
+    (resolved.includes("/Cellar/") && resolved.includes("/lib/node_modules/"));
+
+  if (looksAbsolute && basenameMatches && !looksPackageManagerInternal) {
+    return resolved;
   }
 
-  return `/absolute/path/to/${commandName}`;
+  return `/path/to/${commandName}`;
 }
 
 function printSnippetInstructions(
@@ -983,6 +978,7 @@ function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitR
       "Paste this JSON into secrets.providers in your OpenClaw config.",
       `Likely OpenClaw config path: ${openclawPathResolution.path ?? "unresolved"}`,
       `Path source: ${openclawPathResolution.source} (${openclawPathResolution.reason})`,
+      "Set command explicitly if needed: openclaw-1p-sdk-resolver openclaw snippet --command \"$(command -v openclaw-1p-sdk-resolver)\"",
       "This tool does not edit OpenClaw files."
     ], { trailingBlankLine: true });
   }
