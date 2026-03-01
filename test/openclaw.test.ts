@@ -122,28 +122,24 @@ describe("openclaw helpers", () => {
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
       providerAlias: "custom_provider"
     });
-    expect(snippet.providers).toHaveLength(1);
-    expect(snippet.providers[0].name).toBe("custom_provider");
-    expect(snippet.providers[0].kind).toBe("exec");
-    expect(snippet.providers[0].config.jsonOnly).toBe(true);
-    expect(snippet.providers[0].config.passEnv).toEqual([
-      "HOME",
-      "OP_SERVICE_ACCOUNT_TOKEN",
-      "OP_RESOLVER_CONFIG"
-    ]);
+    const provider = snippet.secrets.providers.custom_provider;
+    expect(provider.source).toBe("exec");
+    expect(provider.command).toBe("/abs/path/openclaw-1p-sdk-resolver");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.passEnv).toEqual(["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]);
   });
 
   it("uses default provider alias when omitted or blank", () => {
     const omitted = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver"
     });
-    expect(omitted.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
+    expect(omitted.secrets.providers[DEFAULT_OPENCLAW_PROVIDER_ALIAS]).toBeDefined();
 
     const blank = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
       providerAlias: "   "
     });
-    expect(blank.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
+    expect(blank.secrets.providers[DEFAULT_OPENCLAW_PROVIDER_ALIAS]).toBeDefined();
   });
 
   it("detects provider setup problems and passes valid config", () => {

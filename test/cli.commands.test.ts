@@ -444,12 +444,15 @@ describe("command cli", () => {
 
     expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      providers: Array<{ name: string; kind: string; config: { jsonOnly: boolean; passEnv: string[] } }>;
+      secrets: {
+        providers: Record<string, { source: string; command: string; jsonOnly: boolean; passEnv: string[] }>;
+      };
     };
-    expect(parsed.providers[0].name).toBe("1p-sdk-resolver");
-    expect(parsed.providers[0].kind).toBe("exec");
-    expect(parsed.providers[0].config.jsonOnly).toBe(true);
-    expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    const provider = parsed.secrets.providers["1p-sdk-resolver"];
+    expect(provider.source).toBe("exec");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.command).toContain("openclaw-1p-sdk-resolver");
+    expect(provider.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
     expect(streams.out.stderr).toBe("");
   });
 
@@ -466,13 +469,15 @@ describe("command cli", () => {
 
     expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      providers: Array<{ name: string; kind: string; config: { command: string; jsonOnly: boolean; passEnv: string[] } }>;
+      secrets: {
+        providers: Record<string, { source: string; command: string; jsonOnly: boolean; passEnv: string[] }>;
+      };
     };
-    expect(parsed.providers[0].name).toBe("op_sdk");
-    expect(parsed.providers[0].kind).toBe("exec");
-    expect(parsed.providers[0].config.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
-    expect(parsed.providers[0].config.jsonOnly).toBe(true);
-    expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    const provider = parsed.secrets.providers.op_sdk;
+    expect(provider.source).toBe("exec");
+    expect(provider.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
     expect(streams.out.stderr).toBe("");
   });
 

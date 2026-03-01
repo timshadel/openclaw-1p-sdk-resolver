@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   accessSync,
@@ -241,6 +242,30 @@ function shouldPrintSnippetInstructions(flags: Map<string, string[]>, streams: C
     return true;
   }
   return Boolean((streams.stderr as NodeJS.WriteStream).isTTY);
+}
+
+function resolveOpenclawResolverCommandHint(entryScriptPath?: string): string {
+  const commandName = "openclaw-1p-sdk-resolver";
+
+  try {
+    const whichResult = execFileSync("which", [commandName], { encoding: "utf8" }).trim();
+    if (whichResult.length > 0) {
+      return whichResult;
+    }
+  } catch {
+    // Fall through to entry-script based resolution.
+  }
+
+  const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
+  if (path.basename(invokedPath) === commandName) {
+    if (invokedPath.includes("/.pnpm/") && invokedPath.includes("/node_modules/openclaw-1p-sdk-resolver/bin/")) {
+      const pnpmHome = path.resolve(invokedPath, "../../../../../../..");
+      return path.join(pnpmHome, commandName);
+    }
+    return invokedPath;
+  }
+
+  return `/absolute/path/to/${commandName}`;
 }
 
 function printSnippetInstructions(
@@ -951,12 +976,7 @@ function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitR
   const commandOverride = getStringFlag(flags, "command");
   const openclawPathResolution = resolveOpenclawConfigPath({ env });
 
-  const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
-  const commandHint =
-    commandOverride ??
-    (path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
-      ? invokedPath
-      : "/absolute/path/to/openclaw-1p-sdk-resolver");
+  const commandHint = commandOverride ?? resolveOpenclawResolverCommandHint(entryScriptPath);
 
   if (shouldPrintSnippetInstructions(flags, streams)) {
     printSnippetInstructions(streams.stderr, [
