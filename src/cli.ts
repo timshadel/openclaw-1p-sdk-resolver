@@ -26,6 +26,10 @@ import {
 import { loadEffectiveConfig, type ConfigIssue, type EffectiveConfig } from "./protocol.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 
+/**
+ * CLI command surface and diagnostics orchestration.
+ * Handles subcommand parsing, safe human/json output formatting, and reveal gating.
+ */
 type CliStreams = {
   stdin: NodeJS.ReadableStream;
   stdout: NodeJS.WritableStream;

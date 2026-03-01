@@ -2,6 +2,10 @@ import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+/**
+ * OpenClaw config integration helpers.
+ * Parses provider config shape, resolves config paths, and builds safe snippet output.
+ */
 export type OpenclawConfigPathResolution = {
   path?: string;
   source: "flag" | "OPENCLAW_CONFIG_PATH" | "OPENCLAW_STATE_DIR" | "OPENCLAW_HOME" | "HOME" | "homedir" | "unresolved";

@@ -1,0 +1,37 @@
+{
+  "generatedAt": "2026-03-01",
+  "overall": {
+    "lines": 93.64,
+    "branches": 90.72
+  },
+  "files": {
+    "src/cli.ts": {
+      "lines": 89.06,
+      "branches": 86.41
+    },
+    "src/exit-policy.ts": {
+      "lines": 100,
+      "branches": 100
+    },
+    "src/onepassword.ts": {
+      "lines": 100,
+      "branches": 100
+    },
+    "src/openclaw.ts": {
+      "lines": 100,
+      "branches": 93.65
+    },
+    "src/protocol.ts": {
+      "lines": 100,
+      "branches": 100
+    },
+    "src/resolver.ts": {
+      "lines": 97.43,
+      "branches": 92.53
+    },
+    "src/sanitize.ts": {
+      "lines": 100,
+      "branches": 100
+    }
+  }
+}

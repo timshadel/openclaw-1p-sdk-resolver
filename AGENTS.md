@@ -72,6 +72,25 @@ Before any PR:
 - `pnpm test` must pass locally.
 - New behavior must include tests.
 
+### CI required checks (phased rollout)
+- Stable CI check names:
+  - `ci/test`
+  - `ci/coverage`
+  - `ci/docs`
+  - `ci/workflow-lint`
+  - `security/dependency-review`
+  - `security/codeql`
+  - `security/scorecard` (advisory)
+- Phase 0 starts in observe mode for newly introduced checks; Phase 1 promotes selected checks to required branch ruleset gates.
+
+### Local preflight
+- `pnpm build`
+- `pnpm test`
+- `pnpm test:coverage`
+- `pnpm check:coverage`
+- `pnpm check:docs`
+- `pnpm check:governance`
+
 ---
 
 ## Architecture expectations
