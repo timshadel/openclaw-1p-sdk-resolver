@@ -113,6 +113,16 @@ describe("openclaw helpers", () => {
     expect(findings[0].fingerprint.includes("supersecretvalue123456")).toBe(false);
   });
 
+  it("scanRepository respects maxFiles and ignores placeholder-like values", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openclaw-maxfiles-"));
+    writeFileSync(path.join(root, "a.env"), "API_TOKEN=${PLACEHOLDER}\n", "utf8");
+    writeFileSync(path.join(root, "b.env"), "API_TOKEN=real-secret-value-123\n", "utf8");
+    const findingsLimited = scanRepositoryForSecretCandidates({ rootDir: root, maxFiles: 1 });
+    expect(findingsLimited.length).toBe(0);
+    const findingsAll = scanRepositoryForSecretCandidates({ rootDir: root, maxFiles: 10 });
+    expect(findingsAll.some((finding) => finding.key === "API_TOKEN")).toBe(true);
+  });
+
   it("suggests provider improvements based on config text and refs", () => {
     const suggestions = suggestOpenclawProviderImprovements({
       openclawText: '{"providers":[]}',

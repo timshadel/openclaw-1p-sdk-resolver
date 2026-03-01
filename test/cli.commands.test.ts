@@ -519,6 +519,93 @@ describe("command cli", () => {
     expect(streams.out.stdout).toContain("SUGGESTIONS");
   });
 
+  it("openclaw audit returns code 2 for unknown audit mode", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "unknown-mode"], {
+      env: {},
+      streams,
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(2);
+    expect(streams.out.stderr).toContain("Unknown audit mode");
+  });
+
+  it("openclaw audit suggest --json works without reading repo findings", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-suggest-json-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(path.join(root, "openclaw.json"), "{\"providers\":[]}\n", "utf8");
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "suggest", "--json", "--path", path.join(root, "openclaw.json")], {
+      env: {},
+      streams,
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      mode: string;
+      findings: unknown[];
+      suggestions: string[];
+    };
+    expect(parsed.mode).toBe("suggest");
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.suggestions.length).toBeGreaterThan(0);
+  });
+
+  it("openclaw audit scan human output shows no-findings row when repo has none", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-empty-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    const cfg = path.join(root, "openclaw.json");
+    writeFileSync(cfg, "{\"providers\":[]}\n", "utf8");
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "scan", "--path", cfg, "--repo", root], {
+      env: {},
+      streams,
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("FINDINGS");
+    expect(streams.out.stdout).toContain("No findings.");
+  });
+
+  it("openclaw audit returns code 2 when config path exists but is unreadable", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-unreadable-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    const cfg = path.join(root, "openclaw.json");
+    writeFileSync(cfg, "{\"providers\":[]}\n", "utf8");
+    chmodSync(cfg, 0o000);
+    const streams = createStreams();
+    try {
+      const code = await runCli(["openclaw", "audit", "scan", "--json", "--path", cfg], {
+        env: {},
+        streams,
+        runResolver: async () => undefined
+      });
+      expect(code).toBe(2);
+      const parsed = JSON.parse(streams.out.stdout) as {
+        configPath: { exists: boolean; readable: boolean };
+      };
+      expect(parsed.configPath.exists).toBe(true);
+      expect(parsed.configPath.readable).toBe(false);
+    } finally {
+      chmodSync(cfg, 0o600);
+    }
+  });
+
+  it("openclaw audit marks parse as invalid for malformed config", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-invalid-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    const cfg = path.join(root, "openclaw.json");
+    writeFileSync(cfg, "{ invalid ", "utf8");
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "scan", "--path", cfg], {
+      env: {},
+      streams,
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("invalid-json");
+  });
+
   it("resolve returns redacted values by default", async () => {
     const streams = createStreams();
     const resolver: SecretResolver = {
