@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { accessSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -45,6 +45,7 @@ describe("protocol", () => {
   it("returns null for missing required fields", () => {
     expect(parseRequestBuffer(Buffer.from(JSON.stringify({ ids: [] })), 1024)).toBeNull();
     expect(parseRequestBuffer(Buffer.from(JSON.stringify({ protocolVersion: 1 })), 1024)).toBeNull();
+    expect(parseRequestBuffer(Buffer.from("null"), 1024)).toBeNull();
   });
 
   it("formats response as JSON", () => {
@@ -132,6 +133,41 @@ describe("protocol", () => {
     expect(effective.path.source).toBe("OP_RESOLVER_CONFIG");
   });
 
+  it("reports unresolved path when no HOME/XDG/override is present", () => {
+    const effective = loadEffectiveConfig({ env: {} });
+    expect(effective.path.source).toBe("unresolved");
+    expect(effective.path.path).toBeUndefined();
+    expect(effective.file.loaded).toBe(false);
+  });
+
+  it("reports unreadable config file errors", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, JSON.stringify({ defaultVault: "MainVault" }), "utf8");
+
+    const effective = loadEffectiveConfig({
+      env: { OP_RESOLVER_CONFIG: customConfigPath },
+      fs: {
+        accessSync: (() => {
+          throw new Error("denied");
+        }) as typeof accessSync
+      }
+    });
+    expect(effective.path.exists).toBe(true);
+    expect(effective.path.readable).toBe(false);
+    expect(effective.issues.some((issue) => issue.code === "config_unreadable")).toBe(true);
+  });
+
+  it("reports non-object json config files", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, JSON.stringify("not-an-object"), "utf8");
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.file.loaded).toBe(false);
+    expect(effective.issues.some((issue) => issue.code === "config_not_object")).toBe(true);
+  });
+
   it("falls back to defaults when config file is malformed json", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
     const customConfigPath = path.join(dir, "custom.json");
@@ -151,6 +187,92 @@ describe("protocol", () => {
 
     const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
     expect(config.allowedIdRegex?.test("anything")).toBe(false);
+  });
+
+  it("reports error when allowedIdRegex is non-string or empty", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(customConfigPath, JSON.stringify({ allowedIdRegex: "" }), "utf8");
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.issues.some((issue) => issue.code === "invalid_allowed_id_regex")).toBe(true);
+  });
+
+  it("reports invalid defaultVault, vaultPolicy, and vaultWhitelist issues", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        defaultVault: " ",
+        vaultPolicy: "not-a-policy",
+        vaultWhitelist: "not-an-array"
+      }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.issues.some((issue) => issue.code === "invalid_default_vault")).toBe(true);
+    expect(effective.issues.some((issue) => issue.code === "invalid_vault_policy")).toBe(true);
+    expect(effective.issues.some((issue) => issue.code === "invalid_vault_whitelist")).toBe(true);
+  });
+
+  it("filters invalid vaultWhitelist entries with warning", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        vaultWhitelist: ["Shared", 5, "  Shared  ", "", "Ops"]
+      }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.config.vaultWhitelist).toEqual(["Shared", "Ops"]);
+    expect(effective.issues.some((issue) => issue.code === "vault_whitelist_filtered")).toBe(true);
+  });
+
+  it("accepts numeric values provided as strings", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        maxIds: "10",
+        maxStdinBytes: "2048",
+        timeoutMs: "9000",
+        stdinTimeoutMs: "7000",
+        concurrency: "3"
+      }),
+      "utf8"
+    );
+
+    const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
+    expect(config.maxIds).toBe(10);
+    expect(config.maxStdinBytes).toBe(2048);
+    expect(config.timeoutMs).toBe(9000);
+    expect(config.stdinTimeoutMs).toBe(7000);
+    expect(config.concurrency).toBe(3);
+  });
+
+  it("reports invalid numeric settings and falls back to defaults", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        maxIds: "not-a-number",
+        timeoutMs: "nope"
+      }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.config.maxIds).toBe(50);
+    expect(effective.config.timeoutMs).toBe(25000);
+    expect(effective.issues.some((issue) => issue.code === "invalid_number" && issue.key === "maxIds")).toBe(true);
+    expect(effective.issues.some((issue) => issue.code === "invalid_number" && issue.key === "timeoutMs")).toBe(true);
   });
 
   it("falls back to legacy vault key", () => {
@@ -184,6 +306,25 @@ describe("protocol", () => {
     const config = loadConfig({ OP_RESOLVER_CONFIG: customConfigPath });
     expect(config.onePasswordClientName).toBe("custom-client");
     expect(config.onePasswordClientVersion).toBe("9.9.9");
+  });
+
+  it("falls back when onePassword client metadata values are invalid", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "onep-sdk-resolver-config-"));
+    const customConfigPath = path.join(dir, "custom.json");
+    writeFileSync(
+      customConfigPath,
+      JSON.stringify({
+        onePasswordClientName: " ",
+        onePasswordClientVersion: 123
+      }),
+      "utf8"
+    );
+
+    const effective = loadEffectiveConfig({ env: { OP_RESOLVER_CONFIG: customConfigPath } });
+    expect(effective.config.onePasswordClientName).toBe("openclaw-1p-sdk-resolver");
+    expect(effective.config.onePasswordClientVersion).toBe("1.0.0");
+    expect(effective.issues.some((issue) => issue.key === "onePasswordClientName")).toBe(true);
+    expect(effective.issues.some((issue) => issue.key === "onePasswordClientVersion")).toBe(true);
   });
 
   it("ignores removed integration metadata keys", () => {

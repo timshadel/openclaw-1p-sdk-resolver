@@ -242,6 +242,24 @@ describe("onepassword adapter", () => {
     expect(peakInFlight).toBeLessThanOrEqual(3);
   });
 
+  it("skips falsy refs in per-ref fallback queue without calling resolve", async () => {
+    const resolve = vi.fn(async (ref: string) => `ok:${ref}`);
+    createClientMock.mockResolvedValue({
+      secrets: { resolve }
+    } as unknown as Awaited<ReturnType<typeof createClient>>);
+
+    const adapter = await createOnePasswordResolver({
+      auth: "token",
+      clientName: "test",
+      clientVersion: "1.0.0"
+    });
+    const result = await adapter.resolveRefs(["", "op://Main/item/field"], 1000, 2);
+
+    expect(result.size).toBe(1);
+    expect(result.get("op://Main/item/field")).toBe("ok:op://Main/item/field");
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it("handles subprocess-backed per-ref failures without throwing", async () => {
     createClientMock.mockResolvedValue({
       secrets: {

@@ -2,9 +2,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SecretResolver } from "../src/onepassword.js";
-import { readStdinWithLimit, runResolver } from "../src/resolver.js";
+import {
+  buildRequestedRefs,
+  mapResolvedValuesToIds,
+  readStdinWithLimit,
+  runCli,
+  runMain,
+  runResolver
+} from "../src/resolver.js";
+import * as onepasswordModule from "../src/onepassword.js";
 
 class CaptureWritable extends Writable {
   public text = "";
@@ -46,6 +54,32 @@ function createConfigEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
 }
 
 describe("resolver", () => {
+  it("buildRequestedRefs filters invalid refs and blocked vaults", () => {
+    const result = buildRequestedRefs({
+      ids: ["ServiceA/token", "op://MainVault/ServiceA/token", "op://OtherVault/ServiceB/token", "bad\nid"],
+      defaultVault: "MainVault",
+      vaultPolicy: "default_vault",
+      vaultWhitelist: []
+    });
+    expect(result.refs).toEqual(["op://MainVault/ServiceA/token", "op://MainVault/ServiceA/token"]);
+    expect(result.refToId.get("op://MainVault/ServiceA/token")).toBe("op://MainVault/ServiceA/token");
+    expect(result.refToId.has("op://OtherVault/ServiceB/token")).toBe(false);
+  });
+
+  it("mapResolvedValuesToIds keeps only string values with mapped refs", () => {
+    const refToId = new Map<string, string>([
+      ["op://MainVault/A/token", "A/token"],
+      ["op://MainVault/B/token", "B/token"]
+    ]);
+    const resolved = new Map<string, string | unknown>([
+      ["op://MainVault/A/token", "secret-a"],
+      ["op://MainVault/B/token", 123],
+      ["op://MainVault/C/token", "secret-c"]
+    ]) as Map<string, string>;
+    const values = mapResolvedValuesToIds(resolved, refToId);
+    expect(values).toEqual({ "A/token": "secret-a" });
+  });
+
   it("always returns valid JSON for invalid request", async () => {
     const out = new CaptureWritable();
 
@@ -368,6 +402,16 @@ describe("resolver", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("readStdinWithLimit settles once when max bytes are exceeded", async () => {
+    const stream = new PassThrough();
+    const pending = readStdinWithLimit(stream, 3, 1000);
+    stream.write("1234");
+    stream.end("5");
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(result.buffer.byteLength).toBe(0);
+  });
+
   it("accepts stdin payload exactly at byte limit", async () => {
     const stream = stdinFrom("123");
     const result = await readStdinWithLimit(stream, 3, 1000);
@@ -399,6 +443,66 @@ describe("resolver", () => {
     });
 
     expect(parseOutput(out.text)).toEqual({ protocolVersion: 1, values: {} });
+  });
+
+  it("returns empty values when all ids are sanitized out", async () => {
+    const out = new CaptureWritable();
+    await runResolver({
+      stdin: stdinFrom(JSON.stringify({ protocolVersion: 2, ids: ["", "bad\nid"] })),
+      stdout: out,
+      env: {
+        ...createConfigEnv({ defaultVault: "MainVault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      }
+    });
+    expect(parseOutput(out.text)).toEqual({ protocolVersion: 2, values: {} });
+  });
+
+  it("returns empty values when refs are all blocked by vault policy", async () => {
+    const out = new CaptureWritable();
+    await runResolver({
+      stdin: stdinFrom(JSON.stringify({ protocolVersion: 2, ids: ["op://OtherVault/Item/field"] })),
+      stdout: out,
+      env: {
+        ...createConfigEnv({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
+        OP_SERVICE_ACCOUNT_TOKEN: "token"
+      }
+    });
+    expect(parseOutput(out.text)).toEqual({ protocolVersion: 2, values: {} });
+  });
+
+  it("uses createOnePasswordResolver path when runtime resolver is not provided", async () => {
+    const out = new CaptureWritable();
+    const createSpy = vi.spyOn(onepasswordModule, "createOnePasswordResolver").mockResolvedValue({
+      resolveRefs: async (refs: string[]) => new Map([[refs[0], "secret-from-factory"]])
+    });
+    try {
+      await runResolver({
+        stdin: stdinFrom(JSON.stringify({ protocolVersion: 1, ids: ["ServiceA/token"] })),
+        stdout: out,
+        env: {
+          ...createConfigEnv({
+            defaultVault: "MainVault",
+            onePasswordClientName: "resolver-tests",
+            onePasswordClientVersion: "2.0.0"
+          }),
+          OP_SERVICE_ACCOUNT_TOKEN: "token"
+        }
+      });
+      expect(createSpy).toHaveBeenCalledWith({
+        auth: "token",
+        clientName: "resolver-tests",
+        clientVersion: "2.0.0"
+      });
+      expect(parseOutput(out.text)).toEqual({
+        protocolVersion: 1,
+        values: {
+          "ServiceA/token": "secret-from-factory"
+        }
+      });
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 
   it("accepts slow chunked stdin payload within timeout", async () => {
@@ -582,5 +686,41 @@ describe("resolver", () => {
         "op://MainVault/ServiceA/token": "shared-secret"
       }
     });
+  });
+
+  it("runMain delegates to run function with argv", async () => {
+    const calls: string[][] = [];
+    const processLike: { exitCode?: number } = {};
+    await runMain({
+      argv: ["doctor", "--json"],
+      processLike,
+      run: async (argv) => {
+        calls.push(argv ?? []);
+      }
+    });
+
+    expect(calls).toEqual([["doctor", "--json"]]);
+    expect(processLike.exitCode).toBeUndefined();
+  });
+
+  it("runMain sets exitCode=3 when run throws", async () => {
+    const processLike: { exitCode?: number } = {};
+    await runMain({
+      processLike,
+      run: async () => {
+        throw new Error("boom");
+      }
+    });
+
+    expect(processLike.exitCode).toBe(3);
+  });
+
+  it("runCli sets process.exitCode from routed command", async () => {
+    const previousExitCode = process.exitCode;
+
+    await runCli(["help"]);
+
+    expect(process.exitCode).toBe(0);
+    process.exitCode = previousExitCode;
   });
 });
