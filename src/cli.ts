@@ -15,6 +15,13 @@ import path from "node:path";
 import { stdin as processStdin, stdout as processStdout, stderr as processStderr } from "node:process";
 import readline from "node:readline/promises";
 import { createOnePasswordResolver, isValidSecretReference, type SecretResolver } from "./onepassword.js";
+import {
+  collectOpenclawReferences,
+  parseOpenclawConfigText,
+  resolveOpenclawConfigPath,
+  scanRepositoryForSecretCandidates,
+  suggestOpenclawProviderImprovements
+} from "./openclaw.js";
 import { loadEffectiveConfig, type ConfigIssue, type EffectiveConfig } from "./protocol.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 
@@ -26,6 +33,7 @@ type CliStreams = {
 
 type CliRuntime = {
   env?: NodeJS.ProcessEnv;
+  cwd?: string;
   streams?: Partial<CliStreams>;
   resolver?: SecretResolver;
   createResolver?: typeof createOnePasswordResolver;
@@ -171,6 +179,7 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
+  stream.write(`  openclaw-1p-sdk-resolver openclaw audit [scan|suggest] [--path <openclaw.json>] [--repo <dir>] [--json]\n`);
   stream.write(
     `  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`
   );
@@ -888,6 +897,102 @@ function runOpenclawSnippet(args: string[], runtime: CliRuntime): ExitResult {
   return { code: 0 };
 }
 
+function runOpenclawAudit(args: string[], runtime: CliRuntime): ExitResult {
+  const streams = normalizeStreams(runtime);
+  const env = runtime.env ?? process.env;
+  const cwd = runtime.cwd ?? process.cwd();
+  const { flags, positionals } = parseFlags(args);
+  const asJson = hasFlag(flags, "json");
+  const auditMode = positionals[0] ?? "scan";
+  if (auditMode !== "scan" && auditMode !== "suggest") {
+    streams.stderr.write("Unknown audit mode. Use: scan | suggest\n");
+    return { code: 2 };
+  }
+
+  const explicitPath = getStringFlag(flags, "path");
+  const repoRoot = getStringFlag(flags, "repo") ?? cwd;
+  const pathResolution = resolveOpenclawConfigPath({ env, explicitPath });
+  const openclawText =
+    pathResolution.path && pathResolution.readable ? readFileSync(pathResolution.path, "utf8") : undefined;
+  const references = openclawText ? collectOpenclawReferences(openclawText) : [];
+  const parseResult = openclawText ? parseOpenclawConfigText(openclawText) : { parsed: undefined as unknown };
+  const parseError = openclawText ? parseResult.parseError : undefined;
+
+  const findings = auditMode === "scan" ? scanRepositoryForSecretCandidates({ rootDir: repoRoot }) : [];
+  const suggestions = suggestOpenclawProviderImprovements({ openclawText, references });
+
+  const payload = {
+    mode: auditMode,
+    configPath: pathResolution,
+    parseError,
+    summary: {
+      referencesFound: references.length,
+      candidateSecrets: findings.filter((finding) => finding.type === "candidate_for_1password").length,
+      riskyLiterals: findings.filter((finding) => finding.type === "risky_literal").length
+    },
+    findings,
+    suggestions
+  };
+
+  if (asJson) {
+    printJson(streams.stdout, payload);
+  } else {
+    streams.stdout.write("OPENCLAW AUDIT\n\n");
+    streams.stdout.write(
+      renderTwoColumnTable("OPENCLAW CONFIGURATION", [
+        ["Path", pathResolution.path ?? "(unresolved)"],
+        ["Source", pathResolution.source],
+        ["Exists", pathResolution.exists ? "yes" : "no"],
+        ["Readable", pathResolution.readable ? "yes" : "no"],
+        ["Reason", pathResolution.reason],
+        ["Parse", parseError ? "invalid-json" : openclawText ? "ok" : "not-loaded"]
+      ])
+    );
+    streams.stdout.write(
+      renderTwoColumnTable("SUMMARY", [
+        ["OpenClaw refs found", String(references.length)],
+        ["Candidate secrets", String(payload.summary.candidateSecrets)],
+        ["Risky literals", String(payload.summary.riskyLiterals)]
+      ])
+    );
+    if (auditMode === "scan") {
+      streams.stdout.write("FINDINGS\n");
+      const rows =
+        findings.length > 0
+          ? findings.map((finding) => [finding.type, finding.file, String(finding.line), finding.key, finding.fingerprint])
+          : [["-", "-", "-", "-", "No findings."]];
+      streams.stdout.write(
+        `${renderAsciiTable(
+          [
+            { header: "Type", maxWidth: 24 },
+            { header: "File", maxWidth: 68 },
+            { header: "Line", maxWidth: 8 },
+            { header: "Key", maxWidth: 28 },
+            { header: "Fingerprint", maxWidth: 28 }
+          ],
+          rows
+        )}\n\n`
+      );
+    }
+    streams.stdout.write("SUGGESTIONS\n");
+    const suggestionRows = suggestions.length > 0 ? suggestions.map((suggestion, index) => [String(index + 1), suggestion]) : [["1", "No suggestions."]];
+    streams.stdout.write(
+      `${renderAsciiTable(
+        [
+          { header: "#", maxWidth: 4 },
+          { header: "Suggestion", maxWidth: 120 }
+        ],
+        suggestionRows
+      )}\n`
+    );
+  }
+
+  if (pathResolution.exists && !pathResolution.readable) {
+    return { code: 2 };
+  }
+  return { code: 0 };
+}
+
 async function runResolve(args: string[], runtime: CliRuntime): Promise<ExitResult> {
   const streams = normalizeStreams(runtime);
   const env = runtime.env ?? process.env;
@@ -1046,7 +1151,10 @@ export async function runCli(argv: string[], runtime: CliRuntime): Promise<numbe
     if (subcommand === "snippet") {
       return runOpenclawSnippet(argv.slice(2), runtime).code;
     }
-    streams.stderr.write("Unknown openclaw subcommand. Use: snippet\n");
+    if (subcommand === "audit") {
+      return runOpenclawAudit(argv.slice(2), runtime).code;
+    }
+    streams.stderr.write("Unknown openclaw subcommand. Use: snippet | audit\n");
     return 2;
   }
 

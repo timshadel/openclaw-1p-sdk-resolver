@@ -466,6 +466,59 @@ describe("command cli", () => {
     expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
   });
 
+  it("openclaw audit scan uses openclaw env precedence and emits safe json findings", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const stateDir = path.join(root, "state");
+    const homeDir = path.join(root, "home");
+    mkdirSync(stateDir, { recursive: true });
+    mkdirSync(path.join(homeDir, ".openclaw"), { recursive: true });
+    writeFileSync(
+      path.join(stateDir, "openclaw.json"),
+      JSON.stringify({
+        secrets: ["op://MainVault/Item/token"]
+      }),
+      "utf8"
+    );
+    writeFileSync(path.join(root, ".env"), "API_TOKEN=supersecretvalue123456\n", "utf8");
+
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "scan", "--json", "--repo", root], {
+      env: {
+        OPENCLAW_STATE_DIR: stateDir,
+        HOME: homeDir
+      },
+      streams,
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(0);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      configPath: { source: string };
+      summary: { referencesFound: number; candidateSecrets: number };
+      findings: Array<{ type: string; fingerprint: string }>;
+    };
+    expect(parsed.configPath.source).toBe("OPENCLAW_STATE_DIR");
+    expect(parsed.summary.referencesFound).toBe(1);
+    expect(parsed.summary.candidateSecrets).toBeGreaterThan(0);
+    expect(parsed.findings[0].fingerprint.includes("supersecretvalue123456")).toBe(false);
+  });
+
+  it("openclaw audit suggest reports recommendations in human output", async () => {
+    const root = path.join(tmpdir(), `onep-cli-audit-suggest-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(path.join(root, "openclaw.json"), "{\"providers\":[]}\n", "utf8");
+
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "audit", "suggest", "--path", path.join(root, "openclaw.json")], {
+      env: {},
+      streams,
+      runResolver: async () => undefined
+    });
+    expect(code).toBe(0);
+    expect(streams.out.stdout).toContain("OPENCLAW AUDIT");
+    expect(streams.out.stdout).toContain("SUGGESTIONS");
+  });
+
   it("resolve returns redacted values by default", async () => {
     const streams = createStreams();
     const resolver: SecretResolver = {
