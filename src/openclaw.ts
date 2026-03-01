@@ -132,31 +132,30 @@ export function buildResolverProviderSnippet(options: {
   commandHint: string;
   providerAlias?: string;
 }): {
-  providers: Array<{
-    name: string;
-    kind: "exec";
-    config: {
-      jsonOnly: true;
-      command: string;
-      passEnv: string[];
-      trustedDirs: string[];
-    };
-  }>;
+  secrets: {
+    providers: Record<
+      string,
+      {
+        source: "exec";
+        command: string;
+        jsonOnly: true;
+        passEnv: string[];
+      }
+    >;
+  };
 } {
   const providerAlias = options.providerAlias?.trim() || DEFAULT_OPENCLAW_PROVIDER_ALIAS;
   return {
-    providers: [
-      {
-        name: providerAlias,
-        kind: "exec",
-        config: {
-          jsonOnly: true,
+    secrets: {
+      providers: {
+        [providerAlias]: {
+          source: "exec",
           command: options.commandHint,
-          passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"],
-          trustedDirs: ["$HOME/.local/bin", "$HOME/bin"]
+          jsonOnly: true,
+          passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
         }
       }
-    ]
+    }
   };
 }
 
@@ -175,10 +174,10 @@ export function checkOpenclawProviderSetup(options: {
         {
           code: "provider_missing",
           message: "OpenClaw config is not an object with provider entries.",
-          path: "providers"
+          path: "secrets.providers"
         }
       ],
-      suggestions: ["Ensure openclaw.json contains a providers array with the resolver exec provider."]
+      suggestions: ["Ensure openclaw.json contains a secrets.providers entry for the resolver exec provider."]
     };
   }
 
@@ -197,7 +196,7 @@ export function checkOpenclawProviderSetup(options: {
     findings.push({
       code: "provider_missing",
       message: `Provider '${providerAlias}' not found in OpenClaw config.`,
-      path: "providers[]"
+      path: "secrets.providers"
     });
     suggestions.push("Add a resolver provider entry using `openclaw-1p-sdk-resolver openclaw snippet`.");
     return {
@@ -207,14 +206,14 @@ export function checkOpenclawProviderSetup(options: {
     };
   }
 
-  const kind = cleanString(provider.kind);
-  if (kind !== "exec") {
+  const source = cleanString(provider.kind);
+  if (source !== "exec") {
     findings.push({
       code: "provider_kind_mismatch",
-      message: "Provider kind should be 'exec'.",
-      path: "providers[].kind",
+      message: "Provider source should be 'exec'.",
+      path: "secrets.providers.<name>.source",
       expected: "exec",
-      actual: kind ?? provider.kind
+      actual: source ?? provider.kind
     });
   }
 
@@ -223,7 +222,7 @@ export function checkOpenclawProviderSetup(options: {
     findings.push({
       code: "provider_json_only_missing",
       message: "Provider config jsonOnly should be true.",
-      path: "providers[].config.jsonOnly",
+      path: "secrets.providers.<name>.jsonOnly",
       expected: true,
       actual: config.jsonOnly
     });
@@ -234,7 +233,7 @@ export function checkOpenclawProviderSetup(options: {
     findings.push({
       code: "provider_command_missing",
       message: "Provider config command is required.",
-      path: "providers[].config.command",
+      path: "secrets.providers.<name>.command",
       expected: "absolute path to openclaw-1p-sdk-resolver",
       actual: config.command
     });
@@ -247,7 +246,7 @@ export function checkOpenclawProviderSetup(options: {
       findings.push({
         code: "provider_passenv_missing",
         message: `Provider config passEnv is missing ${key}.`,
-        path: "providers[].config.passEnv",
+        path: "secrets.providers.<name>.passEnv",
         expected: key,
         actual: passEnv
       });
@@ -278,16 +277,31 @@ function canRead(filePath: string): boolean {
   }
 }
 
-function extractProviders(root: Record<string, unknown>): unknown[] {
-  const topLevelProviders = root.providers;
-  if (Array.isArray(topLevelProviders)) {
-    return topLevelProviders;
-  }
+function extractProviders(root: Record<string, unknown>): Array<Record<string, unknown>> {
   const secrets = root.secrets as Record<string, unknown> | undefined;
-  if (secrets && typeof secrets === "object" && Array.isArray(secrets.providers)) {
-    return secrets.providers;
+  if (!secrets || typeof secrets !== "object") {
+    return [];
   }
-  return [];
+
+  const providers = secrets.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+    return [];
+  }
+
+  return Object.entries(providers as Record<string, unknown>)
+    .filter(([, value]) => !!value && typeof value === "object")
+    .map(([name, value]) => {
+      const providerObject = value as Record<string, unknown>;
+      return {
+        name,
+        kind: providerObject.source,
+        config: {
+          command: providerObject.command,
+          jsonOnly: providerObject.jsonOnly,
+          passEnv: providerObject.passEnv
+        }
+      };
+    });
 }
 
 function cleanString(value: unknown): string | undefined {

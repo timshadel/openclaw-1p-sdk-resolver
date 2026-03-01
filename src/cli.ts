@@ -243,6 +243,26 @@ function shouldPrintSnippetInstructions(flags: Map<string, string[]>, streams: C
   return Boolean((streams.stderr as NodeJS.WriteStream).isTTY);
 }
 
+function resolveOpenclawResolverCommandHint(entryScriptPath?: string): string {
+  const commandName = "openclaw-1p-sdk-resolver";
+  if (!entryScriptPath) {
+    return `/path/to/${commandName}`;
+  }
+
+  const looksAbsolute = path.isAbsolute(entryScriptPath);
+  const resolved = path.resolve(entryScriptPath);
+  const basenameMatches = path.basename(resolved) === commandName;
+  const looksPackageManagerInternal =
+    (resolved.includes("/.pnpm/") && resolved.includes("/node_modules/")) ||
+    (resolved.includes("/Cellar/") && resolved.includes("/lib/node_modules/"));
+
+  if (looksAbsolute && basenameMatches && !looksPackageManagerInternal) {
+    return resolved;
+  }
+
+  return `/path/to/${commandName}`;
+}
+
 function printSnippetInstructions(
   stream: NodeJS.WritableStream,
   lines: string[],
@@ -951,18 +971,14 @@ function runOpenclawSnippet(args: string[], context: CliExecutionContext): ExitR
   const commandOverride = getStringFlag(flags, "command");
   const openclawPathResolution = resolveOpenclawConfigPath({ env });
 
-  const invokedPath = entryScriptPath ? path.resolve(entryScriptPath) : "";
-  const commandHint =
-    commandOverride ??
-    (path.basename(invokedPath) === "openclaw-1p-sdk-resolver"
-      ? invokedPath
-      : "/absolute/path/to/openclaw-1p-sdk-resolver");
+  const commandHint = commandOverride ?? resolveOpenclawResolverCommandHint(entryScriptPath);
 
   if (shouldPrintSnippetInstructions(flags, streams)) {
     printSnippetInstructions(streams.stderr, [
       "Paste this JSON into secrets.providers in your OpenClaw config.",
       `Likely OpenClaw config path: ${openclawPathResolution.path ?? "unresolved"}`,
       `Path source: ${openclawPathResolution.source} (${openclawPathResolution.reason})`,
+      "Set command explicitly if needed: openclaw-1p-sdk-resolver openclaw snippet --command \"$(command -v openclaw-1p-sdk-resolver)\"",
       "This tool does not edit OpenClaw files."
     ], { trailingBlankLine: true });
   }

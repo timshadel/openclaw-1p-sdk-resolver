@@ -444,12 +444,15 @@ describe("command cli", () => {
 
     expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      providers: Array<{ name: string; kind: string; config: { jsonOnly: boolean; passEnv: string[] } }>;
+      secrets: {
+        providers: Record<string, { source: string; command: string; jsonOnly: boolean; passEnv: string[] }>;
+      };
     };
-    expect(parsed.providers[0].name).toBe("1p-sdk-resolver");
-    expect(parsed.providers[0].kind).toBe("exec");
-    expect(parsed.providers[0].config.jsonOnly).toBe(true);
-    expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    const provider = parsed.secrets.providers["1p-sdk-resolver"];
+    expect(provider.source).toBe("exec");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.command).toBe("/path/to/openclaw-1p-sdk-resolver");
+    expect(provider.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
     expect(streams.out.stderr).toBe("");
   });
 
@@ -466,13 +469,15 @@ describe("command cli", () => {
 
     expect(code).toBe(EXIT_POLICY.OK);
     const parsed = JSON.parse(streams.out.stdout) as {
-      providers: Array<{ name: string; kind: string; config: { command: string; jsonOnly: boolean; passEnv: string[] } }>;
+      secrets: {
+        providers: Record<string, { source: string; command: string; jsonOnly: boolean; passEnv: string[] }>;
+      };
     };
-    expect(parsed.providers[0].name).toBe("op_sdk");
-    expect(parsed.providers[0].kind).toBe("exec");
-    expect(parsed.providers[0].config.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
-    expect(parsed.providers[0].config.jsonOnly).toBe(true);
-    expect(parsed.providers[0].config.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
+    const provider = parsed.secrets.providers.op_sdk;
+    expect(provider.source).toBe("exec");
+    expect(provider.command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.passEnv).toContain("OP_SERVICE_ACCOUNT_TOKEN");
     expect(streams.out.stderr).toBe("");
   });
 
@@ -502,7 +507,63 @@ describe("command cli", () => {
     expect(err).toContain("Paste this JSON into secrets.providers");
     expect(err).toContain("Likely OpenClaw config path:");
     expect(err).toContain("Path source: HOME (Using HOME/.openclaw/openclaw.json.)");
+    expect(err).toContain("--command \"$(command -v openclaw-1p-sdk-resolver)\"");
     expect(err.endsWith("\n\n")).toBe(true);
+  });
+
+  it("openclaw snippet preserves valid absolute entryScriptPath command hint", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath: "/usr/local/bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/usr/local/bin/openclaw-1p-sdk-resolver");
+  });
+
+  it("openclaw snippet uses placeholder for package-manager internal entryScriptPath", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath:
+        "/Users/me/.local/share/pnpm/global/5/.pnpm/openclaw-1p-sdk-resolver@0.1.0/node_modules/openclaw-1p-sdk-resolver/bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/path/to/openclaw-1p-sdk-resolver");
+  });
+
+  it("openclaw snippet uses placeholder for relative entryScriptPath", async () => {
+    const streams = createStreams();
+    const code = await runCli(["openclaw", "snippet"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams,
+      entryScriptPath: "./bin/openclaw-1p-sdk-resolver",
+      runResolver: async () => undefined
+    });
+
+    expect(code).toBe(EXIT_POLICY.OK);
+    const parsed = JSON.parse(streams.out.stdout) as {
+      secrets: {
+        providers: Record<string, { command: string }>;
+      };
+    };
+    expect(parsed.secrets.providers["1p-sdk-resolver"].command).toBe("/path/to/openclaw-1p-sdk-resolver");
   });
 
   it("openclaw snippet supports --explain and --quiet precedence", async () => {
@@ -516,6 +577,7 @@ describe("command cli", () => {
     expect(explainStreams.out.stderr).toContain("This tool does not edit OpenClaw files.");
     expect(explainStreams.out.stderr).toContain("Likely OpenClaw config path:");
     expect(explainStreams.out.stderr).toContain("Path source: HOME (Using HOME/.openclaw/openclaw.json.)");
+    expect(explainStreams.out.stderr).toContain("--command \"$(command -v openclaw-1p-sdk-resolver)\"");
     expect(explainStreams.out.stderr.endsWith("\n\n")).toBe(true);
 
     const ttyIn = new PassThrough() as PassThrough & { isTTY?: boolean };
@@ -652,17 +714,14 @@ describe("command cli", () => {
       cfg,
       JSON.stringify({
         secrets: {
-          providers: [
-            {
-              name: "resolver",
-              kind: "exec",
-              config: {
-                jsonOnly: true,
-                command: "/abs/path/openclaw-1p-sdk-resolver",
-                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
-              }
+          providers: {
+            "1p-sdk-resolver": {
+              source: "exec",
+              command: "/abs/path/openclaw-1p-sdk-resolver",
+              jsonOnly: true,
+              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
             }
-          ]
+          }
         }
       }),
       "utf8"

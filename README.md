@@ -82,18 +82,14 @@ Example provider entry:
 ```json
 {
   "secrets": {
-    "providers": [
-      {
-        "name": "1p-sdk-resolver",
-        "kind": "exec",
-        "config": {
-          "jsonOnly": true,
-          "command": "/absolute/path/to/openclaw-1p-sdk-resolver",
-          "passEnv": ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"],
-          "trustedDirs": ["$HOME/.local/bin", "$HOME/bin"]
-        }
+    "providers": {
+      "1p-sdk-resolver": {
+        "source": "exec",
+        "command": "/absolute/path/to/openclaw-1p-sdk-resolver",
+        "jsonOnly": true,
+        "passEnv": ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
       }
-    ]
+    }
   }
 }
 ```
@@ -108,10 +104,10 @@ openclaw-1p-sdk-resolver openclaw snippet
 
 The snippet includes:
 
+- `source: "exec"`
 - `jsonOnly: true`
 - command path guidance
 - `passEnv`: `HOME`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_RESOLVER_CONFIG`
-- `trustedDirs` suggestions
 - This tool never edits OpenClaw files; paste snippet output manually.
 - Snippet JSON is always written to `stdout`; optional guidance is written to `stderr`.
 - Guidance includes likely OpenClaw config path and path-source reasoning.

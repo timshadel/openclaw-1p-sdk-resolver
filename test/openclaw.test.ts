@@ -122,47 +122,42 @@ describe("openclaw helpers", () => {
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
       providerAlias: "custom_provider"
     });
-    expect(snippet.providers).toHaveLength(1);
-    expect(snippet.providers[0].name).toBe("custom_provider");
-    expect(snippet.providers[0].kind).toBe("exec");
-    expect(snippet.providers[0].config.jsonOnly).toBe(true);
-    expect(snippet.providers[0].config.passEnv).toEqual([
-      "HOME",
-      "OP_SERVICE_ACCOUNT_TOKEN",
-      "OP_RESOLVER_CONFIG"
-    ]);
+    const provider = snippet.secrets.providers.custom_provider;
+    expect(provider.source).toBe("exec");
+    expect(provider.command).toBe("/abs/path/openclaw-1p-sdk-resolver");
+    expect(provider.jsonOnly).toBe(true);
+    expect(provider.passEnv).toEqual(["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]);
   });
 
   it("uses default provider alias when omitted or blank", () => {
     const omitted = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver"
     });
-    expect(omitted.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
+    expect(omitted.secrets.providers[DEFAULT_OPENCLAW_PROVIDER_ALIAS]).toBeDefined();
 
     const blank = buildResolverProviderSnippet({
       commandHint: "/abs/path/openclaw-1p-sdk-resolver",
       providerAlias: "   "
     });
-    expect(blank.providers[0].name).toBe(DEFAULT_OPENCLAW_PROVIDER_ALIAS);
+    expect(blank.secrets.providers[DEFAULT_OPENCLAW_PROVIDER_ALIAS]).toBeDefined();
   });
 
-  it("detects provider setup problems and passes valid config", () => {
+  it("detects provider setup problems and passes valid canonical config", () => {
     const missing = checkOpenclawProviderSetup({ parsedConfig: { providers: [] }, providerAlias: "custom_provider" });
     expect(missing.providerFound).toBe(false);
-    expect(missing.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
+    expect(missing.findings.some((finding) => finding.code === "provider_missing" && finding.path === "secrets.providers")).toBe(true);
 
     const bad = checkOpenclawProviderSetup({
       parsedConfig: {
-        providers: [
-          {
-            name: "custom_provider",
-            kind: "file",
-            config: {
+        secrets: {
+          providers: {
+            custom_provider: {
+              source: "file",
               jsonOnly: false,
               passEnv: ["HOME"]
             }
           }
-        ]
+        }
       },
       providerAlias: "custom_provider"
     });
@@ -175,17 +170,14 @@ describe("openclaw helpers", () => {
     const good = checkOpenclawProviderSetup({
       parsedConfig: {
         secrets: {
-          providers: [
-            {
-              name: "custom_provider",
-              kind: "exec",
-              config: {
-                jsonOnly: true,
-                command: "/abs/path/openclaw-1p-sdk-resolver",
-                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
-              }
+          providers: {
+            custom_provider: {
+              source: "exec",
+              command: "/abs/path/openclaw-1p-sdk-resolver",
+              jsonOnly: true,
+              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
             }
-          ]
+          }
         }
       },
       providerAlias: "custom_provider"
@@ -194,35 +186,53 @@ describe("openclaw helpers", () => {
     expect(good.findings).toHaveLength(0);
   });
 
-  it("matches provider by command fallback and handles invalid provider containers", () => {
-    const byCommand = checkOpenclawProviderSetup({
+  it("rejects non-canonical provider containers with deterministic finding", () => {
+    const topLevelArray = checkOpenclawProviderSetup({
       parsedConfig: {
         providers: [
           {
-            name: "different-name",
+            name: "custom_provider",
             kind: "exec",
             config: {
-              jsonOnly: true,
               command: "/usr/local/bin/openclaw-1p-sdk-resolver",
-              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG", 42]
+              jsonOnly: true,
+              passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
             }
           }
         ]
       },
       providerAlias: "custom_provider"
     });
-    expect(byCommand.providerFound).toBe(true);
-    expect(byCommand.findings).toHaveLength(0);
+    expect(topLevelArray.providerFound).toBe(false);
+    expect(topLevelArray.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "provider_missing", path: "secrets.providers" })
+      ])
+    );
 
-    const invalidContainers = checkOpenclawProviderSetup({
+    const nestedArray = checkOpenclawProviderSetup({
       parsedConfig: {
         secrets: {
-          providers: "not-an-array"
+          providers: [
+            {
+              name: "custom_provider",
+              kind: "exec",
+              config: {
+                command: "/usr/local/bin/openclaw-1p-sdk-resolver",
+                jsonOnly: true,
+                passEnv: ["HOME", "OP_SERVICE_ACCOUNT_TOKEN", "OP_RESOLVER_CONFIG"]
+              }
+            }
+          ]
         }
       },
       providerAlias: "custom_provider"
     });
-    expect(invalidContainers.providerFound).toBe(false);
-    expect(invalidContainers.findings.some((finding) => finding.code === "provider_missing")).toBe(true);
+    expect(nestedArray.providerFound).toBe(false);
+    expect(nestedArray.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "provider_missing", path: "secrets.providers" })
+      ])
+    );
   });
 });
