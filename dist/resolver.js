@@ -4,6 +4,41 @@ import { runCli as runCommandCli } from "./cli.js";
 import { formatResponse, loadConfig, parseRequestBuffer } from "./protocol.js";
 import { createOnePasswordResolver, isValidSecretReference } from "./onepassword.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
+export function buildRequestedRefs(options) {
+    const refToId = new Map();
+    const refs = [];
+    for (const id of options.ids) {
+        const ref = mapIdToReference(id, options.defaultVault);
+        if (!isValidSecretReference(ref)) {
+            continue;
+        }
+        const vault = extractVaultFromReference(ref);
+        if (!vault) {
+            continue;
+        }
+        if (!isVaultAllowed({
+            vault,
+            defaultVault: options.defaultVault,
+            vaultPolicy: options.vaultPolicy,
+            vaultWhitelist: options.vaultWhitelist
+        })) {
+            continue;
+        }
+        refToId.set(ref, id);
+        refs.push(ref);
+    }
+    return { refs, refToId };
+}
+export function mapResolvedValuesToIds(resolved, refToId) {
+    const values = Object.create(null);
+    for (const [ref, value] of resolved.entries()) {
+        const id = refToId.get(ref);
+        if (id && typeof value === "string") {
+            values[id] = value;
+        }
+    }
+    return values;
+}
 function withTimeout(promise, timeoutMs) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
@@ -102,29 +137,12 @@ export async function runResolver(runtime = {}) {
         await writeResponse(stdout, emptyResponse(protocolVersion));
         return;
     }
-    const refToId = new Map();
-    const refs = [];
-    // Keep a reverse index so output keys remain original requested IDs.
-    for (const id of ids) {
-        const ref = mapIdToReference(id, config.defaultVault);
-        if (!isValidSecretReference(ref)) {
-            continue;
-        }
-        const vault = extractVaultFromReference(ref);
-        if (!vault) {
-            continue;
-        }
-        if (!isVaultAllowed({
-            vault,
-            defaultVault: config.defaultVault,
-            vaultPolicy: config.vaultPolicy,
-            vaultWhitelist: config.vaultWhitelist
-        })) {
-            continue;
-        }
-        refToId.set(ref, id);
-        refs.push(ref);
-    }
+    const { refs, refToId } = buildRequestedRefs({
+        ids,
+        defaultVault: config.defaultVault,
+        vaultPolicy: config.vaultPolicy,
+        vaultWhitelist: config.vaultWhitelist
+    });
     if (refs.length === 0) {
         await writeResponse(stdout, emptyResponse(protocolVersion));
         return;
@@ -137,13 +155,7 @@ export async function runResolver(runtime = {}) {
                 clientVersion: config.onePasswordClientVersion
             }));
         const resolved = await withTimeout(resolver.resolveRefs(refs, config.timeoutMs, config.concurrency), config.timeoutMs);
-        const values = Object.create(null);
-        for (const [ref, value] of resolved.entries()) {
-            const id = refToId.get(ref);
-            if (id && typeof value === "string") {
-                values[id] = value;
-            }
-        }
+        const values = mapResolvedValuesToIds(resolved, refToId);
         await writeResponse(stdout, {
             protocolVersion,
             values
@@ -161,11 +173,19 @@ export async function runCli(argv = process.argv.slice(2)) {
     });
     process.exitCode = exitCode;
 }
+export async function runMain(options = {}) {
+    const run = options.run ?? runCli;
+    const argv = options.argv ?? process.argv.slice(2);
+    const processLike = options.processLike ?? process;
+    try {
+        await run(argv);
+        // runCli is responsible for setting successful/expected exit codes.
+    }
+    catch {
+        processLike.exitCode = 3;
+    }
+}
 if (import.meta.url === `file://${process.argv[1]}`) {
-    runCli().then(() => {
-        // runCli sets process.exitCode.
-    }, () => {
-        process.exitCode = 3;
-    });
+    void runMain();
 }
 //# sourceMappingURL=resolver.js.map

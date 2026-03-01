@@ -13,10 +13,27 @@ export type ResolverRuntime = {
     env?: NodeJS.ProcessEnv;
     resolver?: SecretResolver;
 };
+export declare function buildRequestedRefs(options: {
+    ids: string[];
+    defaultVault: string;
+    vaultPolicy: "default_vault" | "default_vault+whitelist" | "any";
+    vaultWhitelist: string[];
+}): {
+    refs: string[];
+    refToId: Map<string, string>;
+};
+export declare function mapResolvedValuesToIds(resolved: Map<string, string>, refToId: Map<string, string>): Record<string, string>;
 export declare function readStdinWithLimit(stream: NodeJS.ReadableStream, maxBytes: number, timeoutMs: number): Promise<{
     ok: boolean;
     buffer: Buffer;
 }>;
 export declare function runResolver(runtime?: ResolverRuntime): Promise<void>;
 export declare function runCli(argv?: string[]): Promise<void>;
+export declare function runMain(options?: {
+    run?: (argv?: string[]) => Promise<void>;
+    argv?: string[];
+    processLike?: {
+        exitCode?: number;
+    };
+}): Promise<void>;
 //# sourceMappingURL=resolver.d.ts.map

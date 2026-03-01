@@ -4,6 +4,7 @@ import path from "node:path";
 import { stdin as processStdin, stdout as processStdout, stderr as processStderr } from "node:process";
 import readline from "node:readline/promises";
 import { createOnePasswordResolver, isValidSecretReference } from "./onepassword.js";
+import { collectOpenclawReferences, parseOpenclawConfigText, resolveOpenclawConfigPath, scanRepositoryForSecretCandidates, suggestOpenclawProviderImprovements } from "./openclaw.js";
 import { loadEffectiveConfig } from "./protocol.js";
 import { extractVaultFromReference, isVaultAllowed, mapIdToReference, sanitizeIds } from "./sanitize.js";
 function normalizeStreams(runtime) {
@@ -16,7 +17,7 @@ function normalizeStreams(runtime) {
 function isTruthyFlag(value) {
     return value === "true" || value === "1" || value === "yes";
 }
-function parseFlags(args) {
+export function parseFlags(args) {
     const positionals = [];
     const flags = new Map();
     for (let i = 0; i < args.length; i += 1) {
@@ -47,17 +48,17 @@ function parseFlags(args) {
     }
     return { positionals, flags };
 }
-function getLastFlag(flags, name) {
+export function getLastFlag(flags, name) {
     const values = flags.get(name);
     if (!values || values.length === 0) {
         return undefined;
     }
     return values[values.length - 1];
 }
-function hasFlag(flags, name) {
+export function hasFlag(flags, name) {
     return flags.has(name) && isTruthyFlag(getLastFlag(flags, name));
 }
-function getStringFlag(flags, name) {
+export function getStringFlag(flags, name) {
     if (!flags.has(name)) {
         return undefined;
     }
@@ -100,9 +101,10 @@ function printUsage(stream) {
     stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
     stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--json]\n`);
+    stream.write(`  openclaw-1p-sdk-resolver openclaw audit [scan|suggest] [--path <openclaw.json>] [--repo <dir>] [--json]\n`);
     stream.write(`  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`);
 }
-function truncateCell(value, maxWidth) {
+export function truncateCell(value, maxWidth) {
     if (value.length <= maxWidth) {
         return value;
     }
@@ -114,7 +116,7 @@ function truncateCell(value, maxWidth) {
 function padRight(value, width) {
     return value.padEnd(width, " ");
 }
-function displayValue(value) {
+export function displayValue(value) {
     if (value === undefined) {
         return "-";
     }
@@ -130,7 +132,7 @@ function displayValue(value) {
     }
     return String(value);
 }
-function renderAsciiTable(columns, rows) {
+export function renderAsciiTable(columns, rows) {
     const widths = columns.map((column, index) => {
         const contentWidths = rows.map((row) => row[index]?.length ?? 0);
         const widestContent = Math.max(column.header.length, ...contentWidths);
@@ -160,15 +162,20 @@ function renderTwoColumnTable(title, rows, widths = { key: 36, value: 100 }) {
         { header: "Value", maxWidth: widths.value }
     ], rows)}\n`;
 }
-function writeConfigFileSafely(options) {
+export function writeConfigFileSafely(options) {
+    const fsOps = {
+        openSync: options.fsOps?.openSync ?? openSync,
+        writeFileSync: options.fsOps?.writeFileSync ?? writeFileSync,
+        closeSync: options.fsOps?.closeSync ?? closeSync
+    };
     const baseFlags = fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW;
     const flags = options.overwrite
         ? baseFlags | fsConstants.O_TRUNC
         : baseFlags | fsConstants.O_CREAT | fsConstants.O_EXCL;
     let fd;
     try {
-        fd = openSync(options.filePath, flags, 0o600);
-        writeFileSync(fd, options.body, { encoding: "utf8" });
+        fd = fsOps.openSync(options.filePath, flags, 0o600);
+        fsOps.writeFileSync(fd, options.body, { encoding: "utf8" });
         return { ok: true };
     }
     catch (error) {
@@ -187,7 +194,7 @@ function writeConfigFileSafely(options) {
     finally {
         if (typeof fd === "number") {
             try {
-                closeSync(fd);
+                fsOps.closeSync(fd);
             }
             catch {
                 // Best effort close.
@@ -213,6 +220,85 @@ function redactedSummary(value) {
     const prefix = value.slice(0, 2);
     const suffix = value.slice(-2);
     return `len=${length} mask=${prefix}***${suffix} sha256=${digest.slice(0, 12)}`;
+}
+export function buildRowsForNoRequestedRefs(sanitizedIds, unresolvedReasons) {
+    return sanitizedIds.map((id) => ({
+        id,
+        status: "unresolved",
+        output: unresolvedReasons.get(id) === "policy-blocked" || unresolvedReasons.get(id) === "invalid-ref" ? "filtered" : "missing",
+        reason: unresolvedReasons.get(id) ?? "sdk-unresolved"
+    }));
+}
+export function buildRowsForResolvedRefs(options) {
+    return options.sanitizedIds.map((id) => {
+        if (options.unresolvedReasons.has(id)) {
+            return {
+                id,
+                status: "unresolved",
+                output: "filtered",
+                reason: options.unresolvedReasons.get(id) ?? "filtered"
+            };
+        }
+        const ref = options.requestedRefs.find((candidateRef) => options.refToId.get(candidateRef) === id);
+        if (!ref) {
+            return {
+                id,
+                status: "unresolved",
+                output: "filtered",
+                reason: "internal-mapping-miss"
+            };
+        }
+        const value = options.resolved.get(ref);
+        if (typeof value !== "string") {
+            options.unresolvedReasons.set(id, "sdk-unresolved");
+            return {
+                id,
+                status: "unresolved",
+                output: "missing",
+                reason: "sdk-unresolved"
+            };
+        }
+        return {
+            id,
+            status: "resolved",
+            output: options.reveal ? value : redactedSummary(value),
+            reason: "resolved"
+        };
+    });
+}
+export function toResolveJsonPayload(rows, options) {
+    return {
+        debug: options.debug,
+        reveal: options.reveal,
+        results: rows.map((row) => ({
+            id: row.id,
+            status: row.status,
+            output: row.output,
+            ...(options.debug ? { reason: row.reason } : {})
+        }))
+    };
+}
+export function renderResolveTable(rows, debug) {
+    return renderAsciiTable(debug
+        ? [
+            { header: "ID", maxWidth: 56 },
+            { header: "Status", maxWidth: 12 },
+            { header: "Output", maxWidth: 96 },
+            { header: "Reason", maxWidth: 24 }
+        ]
+        : [
+            { header: "ID", maxWidth: 56 },
+            { header: "Status", maxWidth: 12 },
+            { header: "Output", maxWidth: 96 }
+        ], debug ? rows.map((row) => [row.id, row.status, row.output, row.reason]) : rows.map((row) => [row.id, row.status, row.output]));
+}
+function printResolveResults(streams, options) {
+    if (options.asJson) {
+        printJson(streams.stdout, toResolveJsonPayload(options.rows, { debug: options.debug, reveal: options.reveal }));
+        return;
+    }
+    streams.stdout.write("RESOLVE RESULTS\n");
+    streams.stdout.write(`${renderResolveTable(options.rows, options.debug)}\n`);
 }
 async function readStdinLines(stream) {
     const chunks = [];
@@ -606,6 +692,81 @@ function runOpenclawSnippet(args, runtime) {
     }
     return { code: 0 };
 }
+function runOpenclawAudit(args, runtime) {
+    const streams = normalizeStreams(runtime);
+    const env = runtime.env ?? process.env;
+    const cwd = runtime.cwd ?? process.cwd();
+    const { flags, positionals } = parseFlags(args);
+    const asJson = hasFlag(flags, "json");
+    const auditMode = positionals[0] ?? "scan";
+    if (auditMode !== "scan" && auditMode !== "suggest") {
+        streams.stderr.write("Unknown audit mode. Use: scan | suggest\n");
+        return { code: 2 };
+    }
+    const explicitPath = getStringFlag(flags, "path");
+    const repoRoot = getStringFlag(flags, "repo") ?? cwd;
+    const pathResolution = resolveOpenclawConfigPath({ env, explicitPath });
+    const openclawText = pathResolution.path && pathResolution.readable ? readFileSync(pathResolution.path, "utf8") : undefined;
+    const references = openclawText ? collectOpenclawReferences(openclawText) : [];
+    const parseResult = openclawText ? parseOpenclawConfigText(openclawText) : { parsed: undefined };
+    const parseError = openclawText ? parseResult.parseError : undefined;
+    const findings = auditMode === "scan" ? scanRepositoryForSecretCandidates({ rootDir: repoRoot }) : [];
+    const suggestions = suggestOpenclawProviderImprovements({ openclawText, references });
+    const payload = {
+        mode: auditMode,
+        configPath: pathResolution,
+        parseError,
+        summary: {
+            referencesFound: references.length,
+            candidateSecrets: findings.filter((finding) => finding.type === "candidate_for_1password").length,
+            riskyLiterals: findings.filter((finding) => finding.type === "risky_literal").length
+        },
+        findings,
+        suggestions
+    };
+    if (asJson) {
+        printJson(streams.stdout, payload);
+    }
+    else {
+        streams.stdout.write("OPENCLAW AUDIT\n\n");
+        streams.stdout.write(renderTwoColumnTable("OPENCLAW CONFIGURATION", [
+            ["Path", pathResolution.path ?? "(unresolved)"],
+            ["Source", pathResolution.source],
+            ["Exists", pathResolution.exists ? "yes" : "no"],
+            ["Readable", pathResolution.readable ? "yes" : "no"],
+            ["Reason", pathResolution.reason],
+            ["Parse", parseError ? "invalid-json" : openclawText ? "ok" : "not-loaded"]
+        ]));
+        streams.stdout.write(renderTwoColumnTable("SUMMARY", [
+            ["OpenClaw refs found", String(references.length)],
+            ["Candidate secrets", String(payload.summary.candidateSecrets)],
+            ["Risky literals", String(payload.summary.riskyLiterals)]
+        ]));
+        if (auditMode === "scan") {
+            streams.stdout.write("FINDINGS\n");
+            const rows = findings.length > 0
+                ? findings.map((finding) => [finding.type, finding.file, String(finding.line), finding.key, finding.fingerprint])
+                : [["-", "-", "-", "-", "No findings."]];
+            streams.stdout.write(`${renderAsciiTable([
+                { header: "Type", maxWidth: 24 },
+                { header: "File", maxWidth: 68 },
+                { header: "Line", maxWidth: 8 },
+                { header: "Key", maxWidth: 28 },
+                { header: "Fingerprint", maxWidth: 28 }
+            ], rows)}\n\n`);
+        }
+        streams.stdout.write("SUGGESTIONS\n");
+        const suggestionRows = suggestions.length > 0 ? suggestions.map((suggestion, index) => [String(index + 1), suggestion]) : [["1", "No suggestions."]];
+        streams.stdout.write(`${renderAsciiTable([
+            { header: "#", maxWidth: 4 },
+            { header: "Suggestion", maxWidth: 120 }
+        ], suggestionRows)}\n`);
+    }
+    if (pathResolution.exists && !pathResolution.readable) {
+        return { code: 2 };
+    }
+    return { code: 0 };
+}
 async function runResolve(args, runtime) {
     const streams = normalizeStreams(runtime);
     const env = runtime.env ?? process.env;
@@ -668,41 +829,8 @@ async function runResolve(args, runtime) {
         requestedRefs.push(ref);
     }
     if (requestedRefs.length === 0) {
-        const rows = sanitizedIds.map((id) => ({
-            id,
-            status: "unresolved",
-            output: unresolvedReasons.get(id) === "policy-blocked" || unresolvedReasons.get(id) === "invalid-ref" ? "filtered" : "missing",
-            reason: unresolvedReasons.get(id) ?? "sdk-unresolved"
-        }));
-        if (asJson) {
-            printJson(streams.stdout, {
-                debug,
-                reveal,
-                results: rows.map((row) => ({
-                    id: row.id,
-                    status: row.status,
-                    output: row.output,
-                    ...(debug ? { reason: row.reason } : {})
-                }))
-            });
-        }
-        else {
-            streams.stdout.write("RESOLVE RESULTS\n");
-            streams.stdout.write(`${renderAsciiTable(debug
-                ? [
-                    { header: "ID", maxWidth: 56 },
-                    { header: "Status", maxWidth: 12 },
-                    { header: "Output", maxWidth: 96 },
-                    { header: "Reason", maxWidth: 24 }
-                ]
-                : [
-                    { header: "ID", maxWidth: 56 },
-                    { header: "Status", maxWidth: 12 },
-                    { header: "Output", maxWidth: 96 }
-                ], debug
-                ? rows.map((row) => [row.id, row.status, row.output, row.reason])
-                : rows.map((row) => [row.id, row.status, row.output]))}\n`);
-        }
+        const rows = buildRowsForNoRequestedRefs(sanitizedIds, unresolvedReasons);
+        printResolveResults(streams, { rows, debug, reveal, asJson });
         return { code: 1 };
     }
     try {
@@ -713,70 +841,15 @@ async function runResolve(args, runtime) {
                 clientVersion: effective.config.onePasswordClientVersion
             }));
         const resolved = await resolver.resolveRefs(requestedRefs, effective.config.timeoutMs, effective.config.concurrency);
-        const rows = sanitizedIds.map((id) => {
-            if (unresolvedReasons.has(id)) {
-                return {
-                    id,
-                    status: "unresolved",
-                    output: "filtered",
-                    reason: unresolvedReasons.get(id) ?? "filtered"
-                };
-            }
-            const ref = requestedRefs.find((candidateRef) => refToId.get(candidateRef) === id);
-            if (!ref) {
-                return {
-                    id,
-                    status: "unresolved",
-                    output: "filtered",
-                    reason: "internal-mapping-miss"
-                };
-            }
-            const value = resolved.get(ref);
-            if (typeof value !== "string") {
-                unresolvedReasons.set(id, "sdk-unresolved");
-                return {
-                    id,
-                    status: "unresolved",
-                    output: "missing",
-                    reason: "sdk-unresolved"
-                };
-            }
-            return {
-                id,
-                status: "resolved",
-                output: reveal ? value : redactedSummary(value),
-                reason: "resolved"
-            };
+        const rows = buildRowsForResolvedRefs({
+            sanitizedIds,
+            unresolvedReasons,
+            requestedRefs,
+            refToId,
+            resolved,
+            reveal
         });
-        if (asJson) {
-            printJson(streams.stdout, {
-                debug,
-                reveal,
-                results: rows.map((row) => ({
-                    id: row.id,
-                    status: row.status,
-                    output: row.output,
-                    ...(debug ? { reason: row.reason } : {})
-                }))
-            });
-        }
-        else {
-            streams.stdout.write("RESOLVE RESULTS\n");
-            streams.stdout.write(`${renderAsciiTable(debug
-                ? [
-                    { header: "ID", maxWidth: 56 },
-                    { header: "Status", maxWidth: 12 },
-                    { header: "Output", maxWidth: 96 },
-                    { header: "Reason", maxWidth: 24 }
-                ]
-                : [
-                    { header: "ID", maxWidth: 56 },
-                    { header: "Status", maxWidth: 12 },
-                    { header: "Output", maxWidth: 96 }
-                ], debug
-                ? rows.map((row) => [row.id, row.status, row.output, row.reason])
-                : rows.map((row) => [row.id, row.status, row.output]))}\n`);
-        }
+        printResolveResults(streams, { rows, debug, reveal, asJson });
         return {
             code: rows.every((row) => row.status === "resolved") ? 0 : 1
         };
@@ -825,7 +898,10 @@ export async function runCli(argv, runtime) {
         if (subcommand === "snippet") {
             return runOpenclawSnippet(argv.slice(2), runtime).code;
         }
-        streams.stderr.write("Unknown openclaw subcommand. Use: snippet\n");
+        if (subcommand === "audit") {
+            return runOpenclawAudit(argv.slice(2), runtime).code;
+        }
+        streams.stderr.write("Unknown openclaw subcommand. Use: snippet | audit\n");
         return 2;
     }
     if (command === "resolve") {
