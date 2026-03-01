@@ -256,7 +256,7 @@ export async function runResolver(runtime: ResolverRuntime = {}): Promise<void> 
 export type CliProcessInvocation = {
   args: string[];
   env: NodeJS.ProcessEnv;
-  processLike: { exitCode?: number | string };
+  processLike: { exitCode?: NodeJS.Process["exitCode"] };
 };
 
 export async function executeCliProcess(
@@ -291,7 +291,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 export async function runMain(options: {
   run?: (argv?: string[]) => Promise<void>;
   argv?: string[];
-  processLike?: { exitCode?: number | string };
+  processLike?: { exitCode?: NodeJS.Process["exitCode"] };
 } = {}): Promise<void> {
   const run = options.run ?? runCli;
   const argv = options.argv ?? process.argv.slice(2);
