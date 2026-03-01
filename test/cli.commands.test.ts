@@ -578,19 +578,27 @@ describe("command cli", () => {
     expect(parsed.actions.length).toBeGreaterThan(0);
   });
 
-  it("openclaw check --check returns findings exit code and parse/read errors", async () => {
+  it("openclaw check --strict returns findings exit code and parse/read errors", async () => {
     const root = path.join(tmpdir(), `onep-cli-check-check-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(root, { recursive: true });
     const cfg = path.join(root, "openclaw.json");
     writeFileSync(cfg, "{\"providers\":[]}\n", "utf8");
 
     const findingsStreams = createStreams();
-    const findingsCode = await runCli(["openclaw", "check", "--check", "--path", cfg], {
+    const findingsCode = await runCli(["openclaw", "check", "--strict", "--path", cfg], {
       env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
       streams: findingsStreams,
       runResolver: async () => undefined
     });
     expect(findingsCode).toBe(EXIT_POLICY.FINDINGS);
+
+    const nonStrictStreams = createStreams();
+    const nonStrictCode = await runCli(["openclaw", "check", "--check", "--path", cfg], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: nonStrictStreams,
+      runResolver: async () => undefined
+    });
+    expect(nonStrictCode).toBe(EXIT_POLICY.OK);
 
     const parseStreams = createStreams();
     writeFileSync(cfg, "{ invalid", "utf8");
@@ -636,7 +644,7 @@ describe("command cli", () => {
     expect(parsed.status).toBe("runtime-error");
   });
 
-  it("openclaw diagnose includes extended resolver config details", async () => {
+  it("openclaw check --details includes extended resolver config details", async () => {
     const root = path.join(tmpdir(), `onep-cli-diagnose-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     mkdirSync(root, { recursive: true });
     const cfg = path.join(root, "openclaw.json");
@@ -660,7 +668,7 @@ describe("command cli", () => {
       "utf8"
     );
     const streams = createStreams();
-    const code = await runCli(["openclaw", "diagnose", "--json", "--path", cfg], {
+    const code = await runCli(["openclaw", "check", "--details", "--json", "--path", cfg], {
       env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
       streams,
       runResolver: async () => undefined
@@ -736,9 +744,9 @@ describe("command cli", () => {
     expect(sdkFailParsed.status).toBe("runtime-error");
   });
 
-  it("1password check --check returns findings for unresolved probe", async () => {
+  it("1password check --strict returns findings for unresolved probe", async () => {
     const streams = createStreams();
-    const code = await runCli(["1password", "check", "--json", "--check", "--probe-id", "MyAPI/token"], {
+    const code = await runCli(["1password", "check", "--json", "--strict", "--probe-id", "MyAPI/token"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -818,9 +826,9 @@ describe("command cli", () => {
     expect(invalidRefParsed.probe.reason).toBe("invalid-ref");
   });
 
-  it("1password diagnose --json includes resolver internals and policy summary", async () => {
+  it("1password check --details --json includes resolver internals and policy summary", async () => {
     const streams = createStreams();
-    const code = await runCli(["1password", "diagnose", "--json", "--probe-id", "MyAPI/token"], {
+    const code = await runCli(["1password", "check", "--details", "--json", "--probe-id", "MyAPI/token"], {
       env: {
         HOME: createHomeWithConfig({ defaultVault: "MainVault", vaultPolicy: "default_vault" }),
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -848,14 +856,14 @@ describe("command cli", () => {
     expect(streams.out.stdout.includes("hidden-secret")).toBe(false);
   });
 
-  it("1password diagnose reports configured allowedIdRegex policy state", async () => {
+  it("1password check --details reports configured allowedIdRegex policy state", async () => {
     const home = createHomeWithConfig({
       defaultVault: "MainVault",
       vaultPolicy: "default_vault",
       allowedIdRegex: "^[A-Za-z0-9_\\/-]+$"
     });
     const streams = createStreams();
-    const code = await runCli(["1password", "diagnose", "--json"], {
+    const code = await runCli(["1password", "check", "--details", "--json"], {
       env: {
         HOME: home,
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -871,14 +879,14 @@ describe("command cli", () => {
     expect(parsed.policy.allowedIdRegexState).toBe("configured");
   });
 
-  it("1password diagnose reports fail-closed allowedIdRegex policy state", async () => {
+  it("1password check --details reports fail-closed allowedIdRegex policy state", async () => {
     const home = createHomeWithConfig({
       defaultVault: "MainVault",
       vaultPolicy: "default_vault",
       allowedIdRegex: "["
     });
     const streams = createStreams();
-    const code = await runCli(["1password", "diagnose", "--json"], {
+    const code = await runCli(["1password", "check", "--details", "--json"], {
       env: {
         HOME: home,
         OP_SERVICE_ACCOUNT_TOKEN: "token"
@@ -1369,6 +1377,24 @@ describe("command cli", () => {
     });
     expect(unknownOnepasswordSubcommandCode).toBe(EXIT_POLICY.ERROR);
     expect(unknownOnepasswordSubcommandStreams.out.stderr).toContain("Unknown 1password subcommand");
+
+    const removedOpenclawDiagnoseStreams = createStreams();
+    const removedOpenclawDiagnoseCode = await runCli(["openclaw", "diagnose"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: removedOpenclawDiagnoseStreams,
+      runResolver: async () => undefined
+    });
+    expect(removedOpenclawDiagnoseCode).toBe(EXIT_POLICY.ERROR);
+    expect(removedOpenclawDiagnoseStreams.out.stderr).toContain("Unknown openclaw subcommand. Use: check | snippet");
+
+    const removedOnepasswordDiagnoseStreams = createStreams();
+    const removedOnepasswordDiagnoseCode = await runCli(["1password", "diagnose"], {
+      env: { HOME: createHomeWithConfig({ defaultVault: "MainVault" }) },
+      streams: removedOnepasswordDiagnoseStreams,
+      runResolver: async () => undefined
+    });
+    expect(removedOnepasswordDiagnoseCode).toBe(EXIT_POLICY.ERROR);
+    expect(removedOnepasswordDiagnoseStreams.out.stderr).toContain("Unknown 1password subcommand. Use: check | snippet");
   });
 
   it("accepts 1p as shorthand for 1password command group", async () => {

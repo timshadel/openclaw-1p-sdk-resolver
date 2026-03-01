@@ -265,16 +265,16 @@ function printUsage(stream: NodeJS.WritableStream): void {
   stream.write(`  openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]\n`);
   stream.write(`  openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]\n`);
   stream.write(`  openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]\n`);
-  stream.write(`  openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]\n`);
   stream.write(
-    `  openclaw-1p-sdk-resolver 1password check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`
+    `  openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--strict] [--details]\n`
   );
-  stream.write(`  openclaw-1p-sdk-resolver 1password diagnose [--json] [--probe-id <id>] [--debug]\n`);
+  stream.write(
+    `  openclaw-1p-sdk-resolver 1password check [--json] [--strict] [--details] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]\n`
+  );
   stream.write(
     `  openclaw-1p-sdk-resolver 1password snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]\n`
   );
-  stream.write(`  openclaw-1p-sdk-resolver 1p <check|diagnose|snippet> [...flags]  # shorthand alias\n`);
+  stream.write(`  openclaw-1p-sdk-resolver 1p <check|snippet> [...flags]  # shorthand alias\n`);
   stream.write(
     `  openclaw-1p-sdk-resolver resolve --id <id> [--id <id>] [--stdin] [--json] [--debug] [--reveal --yes]\n`
   );
@@ -997,7 +997,7 @@ async function analyzeOpenclawSetup(
 }> {
   const { streams, env } = context;
   const { flags } = parseFlags(args);
-  const checkMode = hasFlag(flags, "check");
+  const strictMode = hasFlag(flags, "strict");
   const explicitPath = getStringFlag(flags, "path");
   const providerAlias = getStringFlag(flags, "provider");
   const pathResolution = resolveOpenclawConfigPath({ env, explicitPath });
@@ -1073,7 +1073,7 @@ async function analyzeOpenclawSetup(
     actions.push("Create an OpenClaw config file, then add the provider snippet output.");
   }
   actions.push("Use `openclaw-1p-sdk-resolver openclaw snippet` and paste it under OpenClaw secrets.providers.");
-  actions.push("Run `openclaw-1p-sdk-resolver openclaw check --check` after updating config.");
+  actions.push("Run `openclaw-1p-sdk-resolver openclaw check --strict` after updating config.");
 
   const status: "clean" | "findings" | "error" | "runtime-error" =
     sdkStatus === "error"
@@ -1091,14 +1091,14 @@ async function analyzeOpenclawSetup(
       ? EXIT_POLICY.RUNTIME
       : status === "error"
         ? EXIT_POLICY.ERROR
-        : status === "findings" && checkMode
+        : status === "findings" && strictMode
           ? EXIT_POLICY.FINDINGS
           : EXIT_POLICY.OK;
 
   return {
     payload: {
       status,
-      checkMode,
+      checkMode: strictMode,
       path: pathResolution,
       parseError,
       provider,
@@ -1116,10 +1116,54 @@ async function analyzeOpenclawSetup(
 }
 
 async function runOpenclawCheck(args: string[], context: CliExecutionContext, runtime: CliRuntime): Promise<ExitResult> {
-  const { streams } = context;
+  const { streams, env } = context;
   const { flags } = parseFlags(args);
   const asJson = hasFlag(flags, "json");
+  const detailsMode = hasFlag(flags, "details");
   const analysis = await analyzeOpenclawSetup(args, context, runtime);
+
+  if (detailsMode) {
+    const effective = loadEffectiveConfig({ env });
+    const payload = {
+      ...analysis.payload,
+      resolverConfig: toSerializableConfig(effective.config),
+      resolverProvenance: toSerializableProvenance(effective),
+      resolverIssues: effective.issues
+    };
+
+    if (asJson) {
+      printJson(streams.stdout, payload);
+    } else {
+      streams.stdout.write("OPENCLAW CHECK\n\n");
+      streams.stdout.write("SUMMARY\n");
+      streams.stdout.write(`- status: ${payload.status}\n`);
+      streams.stdout.write(`- provider found: ${payload.provider.providerFound ? "yes" : "no"}\n`);
+      streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.resolver.tokenPresent ? "yes" : "no"}\n`);
+      streams.stdout.write(`- 1Password SDK: ${payload.resolver.sdkStatus}\n\n`);
+      streams.stdout.write("OPENCLAW CONFIG PATH\n");
+      streams.stdout.write(`- path: ${payload.path.path ?? "(unresolved)"}\n`);
+      streams.stdout.write(`- source: ${payload.path.source}\n`);
+      streams.stdout.write(`- reason: ${payload.path.reason}\n`);
+      streams.stdout.write(
+        `- exists/readable: ${payload.path.exists ? "yes" : "no"}/${payload.path.readable ? "yes" : "no"}\n\n`
+      );
+      streams.stdout.write("PROVIDER FINDINGS\n");
+      if (payload.provider.findings.length === 0) {
+        streams.stdout.write("- none\n");
+      } else {
+        for (const finding of payload.provider.findings) {
+          streams.stdout.write(`- ${finding.code} at ${finding.path}: ${finding.message}\n`);
+        }
+      }
+      streams.stdout.write("\nRESOLVER CONFIG\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
+      streams.stdout.write("\nRESOLVER PROVENANCE\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
+      streams.stdout.write("\nRESOLVER ISSUES\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
+    }
+    return { code: analysis.exit };
+  }
 
   if (asJson) {
     printJson(streams.stdout, analysis.payload);
@@ -1149,56 +1193,6 @@ async function runOpenclawCheck(args: string[], context: CliExecutionContext, ru
     }
   }
 
-  return { code: analysis.exit };
-}
-
-async function runOpenclawDiagnose(
-  args: string[],
-  context: CliExecutionContext,
-  runtime: CliRuntime
-): Promise<ExitResult> {
-  const { streams, env } = context;
-  const { flags } = parseFlags(args);
-  const asJson = hasFlag(flags, "json");
-  const analysis = await analyzeOpenclawSetup(args, context, runtime);
-  const effective = loadEffectiveConfig({ env });
-
-  const payload = {
-    ...analysis.payload,
-    resolverConfig: toSerializableConfig(effective.config),
-    resolverProvenance: toSerializableProvenance(effective),
-    resolverIssues: effective.issues
-  };
-
-  if (asJson) {
-    printJson(streams.stdout, payload);
-  } else {
-    streams.stdout.write("OPENCLAW DIAGNOSE\n\n");
-    streams.stdout.write("SUMMARY\n");
-    streams.stdout.write(`- status: ${payload.status}\n`);
-    streams.stdout.write(`- provider found: ${payload.provider.providerFound ? "yes" : "no"}\n`);
-    streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.resolver.tokenPresent ? "yes" : "no"}\n`);
-    streams.stdout.write(`- 1Password SDK: ${payload.resolver.sdkStatus}\n\n`);
-    streams.stdout.write("OPENCLAW CONFIG PATH\n");
-    streams.stdout.write(`- path: ${payload.path.path ?? "(unresolved)"}\n`);
-    streams.stdout.write(`- source: ${payload.path.source}\n`);
-    streams.stdout.write(`- reason: ${payload.path.reason}\n`);
-    streams.stdout.write(`- exists/readable: ${payload.path.exists ? "yes" : "no"}/${payload.path.readable ? "yes" : "no"}\n\n`);
-    streams.stdout.write("PROVIDER FINDINGS\n");
-    if (payload.provider.findings.length === 0) {
-      streams.stdout.write("- none\n");
-    } else {
-      for (const finding of payload.provider.findings) {
-        streams.stdout.write(`- ${finding.code} at ${finding.path}: ${finding.message}\n`);
-      }
-    }
-    streams.stdout.write("\nRESOLVER CONFIG\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
-    streams.stdout.write("\nRESOLVER PROVENANCE\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
-    streams.stdout.write("\nRESOLVER ISSUES\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
-  }
   return { code: analysis.exit };
 }
 
@@ -1238,7 +1232,7 @@ async function analyzeOnePasswordSetup(
 ): Promise<{ payload: OnePasswordCheckPayload; effective: EffectiveConfig; exit: ExitCode }> {
   const { env } = context;
   const { flags } = parseFlags(args);
-  const checkMode = hasFlag(flags, "check");
+  const strictMode = hasFlag(flags, "strict");
   const debug = hasFlag(flags, "debug");
   const probeId = getStringFlag(flags, "probe-id");
   const probeTimeout = parseProbeTimeoutMs(getStringFlag(flags, "probe-timeout-ms"), 25_000);
@@ -1377,14 +1371,14 @@ async function analyzeOnePasswordSetup(
       ? EXIT_POLICY.RUNTIME
       : status === "error"
         ? EXIT_POLICY.ERROR
-        : status === "findings" && checkMode
+        : status === "findings" && strictMode
           ? EXIT_POLICY.FINDINGS
           : EXIT_POLICY.OK;
 
   return {
     payload: {
       status,
-      checkMode,
+      checkMode: strictMode,
       tokenPresent,
       sdkStatus,
       config: {
@@ -1409,7 +1403,56 @@ async function runOnepasswordCheck(
   const { streams } = context;
   const { flags } = parseFlags(args);
   const asJson = hasFlag(flags, "json");
+  const detailsMode = hasFlag(flags, "details");
   const analysis = await analyzeOnePasswordSetup(args, context, runtime);
+
+  if (detailsMode) {
+    const provenance = analysis.effective.provenance.allowedIdRegex;
+    const allowedIdRegexState: "unset" | "configured" | "fail-closed" =
+      provenance?.value instanceof RegExp && provenance.value.source === "$a"
+        ? "fail-closed"
+        : provenance?.value instanceof RegExp
+          ? "configured"
+          : "unset";
+
+    const payload: OnePasswordDiagnosePayload = {
+      ...analysis.payload,
+      resolverConfig: toSerializableConfig(analysis.effective.config),
+      resolverProvenance: toSerializableProvenance(analysis.effective),
+      resolverIssues: analysis.effective.issues,
+      policy: {
+        defaultVault: analysis.effective.config.defaultVault,
+        vaultPolicy: analysis.effective.config.vaultPolicy,
+        vaultWhitelistCount: analysis.effective.config.vaultWhitelist.length,
+        allowedIdRegexState
+      }
+    };
+
+    if (asJson) {
+      printJson(streams.stdout, payload);
+    } else {
+      streams.stdout.write("1PASSWORD CHECK\n\n");
+      streams.stdout.write("SUMMARY\n");
+      streams.stdout.write(`- status: ${payload.status}\n`);
+      streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.tokenPresent ? "yes" : "no"}\n`);
+      streams.stdout.write(`- 1Password SDK: ${payload.sdkStatus}\n`);
+      streams.stdout.write(
+        `- probe: ${payload.probe.requested ? `${payload.probe.status} (${payload.probe.reason})` : "not requested"}\n`
+      );
+      streams.stdout.write("\nPOLICY\n");
+      streams.stdout.write(`- defaultVault: ${payload.policy.defaultVault}\n`);
+      streams.stdout.write(`- vaultPolicy: ${payload.policy.vaultPolicy}\n`);
+      streams.stdout.write(`- vaultWhitelistCount: ${payload.policy.vaultWhitelistCount}\n`);
+      streams.stdout.write(`- allowedIdRegexState: ${payload.policy.allowedIdRegexState}\n`);
+      streams.stdout.write("\nRESOLVER CONFIG\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
+      streams.stdout.write("\nRESOLVER PROVENANCE\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
+      streams.stdout.write("\nRESOLVER ISSUES\n");
+      streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
+    }
+    return { code: analysis.exit };
+  }
 
   if (asJson) {
     printJson(streams.stdout, analysis.payload);
@@ -1447,60 +1490,6 @@ async function runOnepasswordCheck(
     }
   }
 
-  return { code: analysis.exit };
-}
-
-async function runOnepasswordDiagnose(
-  args: string[],
-  context: CliExecutionContext,
-  runtime: CliRuntime
-): Promise<ExitResult> {
-  const { streams } = context;
-  const { flags } = parseFlags(args);
-  const asJson = hasFlag(flags, "json");
-  const analysis = await analyzeOnePasswordSetup(args, context, runtime);
-  const provenance = analysis.effective.provenance.allowedIdRegex;
-  const allowedIdRegexState: "unset" | "configured" | "fail-closed" =
-    provenance?.value instanceof RegExp && provenance.value.source === "$a"
-      ? "fail-closed"
-      : provenance?.value instanceof RegExp
-        ? "configured"
-        : "unset";
-
-  const payload: OnePasswordDiagnosePayload = {
-    ...analysis.payload,
-    resolverConfig: toSerializableConfig(analysis.effective.config),
-    resolverProvenance: toSerializableProvenance(analysis.effective),
-    resolverIssues: analysis.effective.issues,
-    policy: {
-      defaultVault: analysis.effective.config.defaultVault,
-      vaultPolicy: analysis.effective.config.vaultPolicy,
-      vaultWhitelistCount: analysis.effective.config.vaultWhitelist.length,
-      allowedIdRegexState
-    }
-  };
-
-  if (asJson) {
-    printJson(streams.stdout, payload);
-  } else {
-    streams.stdout.write("1PASSWORD DIAGNOSE\n\n");
-    streams.stdout.write("SUMMARY\n");
-    streams.stdout.write(`- status: ${payload.status}\n`);
-    streams.stdout.write(`- OP_SERVICE_ACCOUNT_TOKEN present: ${payload.tokenPresent ? "yes" : "no"}\n`);
-    streams.stdout.write(`- 1Password SDK: ${payload.sdkStatus}\n`);
-    streams.stdout.write(`- probe: ${payload.probe.requested ? `${payload.probe.status} (${payload.probe.reason})` : "not requested"}\n`);
-    streams.stdout.write("\nPOLICY\n");
-    streams.stdout.write(`- defaultVault: ${payload.policy.defaultVault}\n`);
-    streams.stdout.write(`- vaultPolicy: ${payload.policy.vaultPolicy}\n`);
-    streams.stdout.write(`- vaultWhitelistCount: ${payload.policy.vaultWhitelistCount}\n`);
-    streams.stdout.write(`- allowedIdRegexState: ${payload.policy.allowedIdRegexState}\n`);
-    streams.stdout.write("\nRESOLVER CONFIG\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverConfig, null, 2)}\n`);
-    streams.stdout.write("\nRESOLVER PROVENANCE\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverProvenance, null, 2)}\n`);
-    streams.stdout.write("\nRESOLVER ISSUES\n");
-    streams.stdout.write(`${JSON.stringify(payload.resolverIssues, null, 2)}\n`);
-  }
   return { code: analysis.exit };
 }
 
@@ -1702,10 +1691,7 @@ export async function runCli(argv: string[], runtime: CliRuntime): Promise<numbe
     if (subcommand === "check") {
       return (await runOpenclawCheck(argv.slice(2), context, runtime)).code;
     }
-    if (subcommand === "diagnose") {
-      return (await runOpenclawDiagnose(argv.slice(2), context, runtime)).code;
-    }
-    streams.stderr.write("Unknown openclaw subcommand. Use: check | snippet | diagnose\n");
+    streams.stderr.write("Unknown openclaw subcommand. Use: check | snippet\n");
     return EXIT_POLICY.ERROR;
   }
 
@@ -1714,13 +1700,10 @@ export async function runCli(argv: string[], runtime: CliRuntime): Promise<numbe
     if (subcommand === "check") {
       return (await runOnepasswordCheck(argv.slice(2), context, runtime)).code;
     }
-    if (subcommand === "diagnose") {
-      return (await runOnepasswordDiagnose(argv.slice(2), context, runtime)).code;
-    }
     if (subcommand === "snippet") {
       return runOnepasswordSnippet(argv.slice(2), context).code;
     }
-    streams.stderr.write("Unknown 1password subcommand. Use: check | diagnose | snippet\n");
+    streams.stderr.write("Unknown 1password subcommand. Use: check | snippet\n");
     return EXIT_POLICY.ERROR;
   }
 

@@ -70,3 +70,4 @@ Use [`TEMPLATE.md`](./TEMPLATE.md) for new ADRs.
 - [`008-cli-surface-and-output-contracts.md`](./008-cli-surface-and-output-contracts.md)
 - [`009-provider-identity-and-command-family-naming.md`](./009-provider-identity-and-command-family-naming.md)
 - [`010-quality-gates-and-coverage-policy.md`](./010-quality-gates-and-coverage-policy.md)
+- [`011-diagnostics-command-cohesion-and-flag-model.md`](./011-diagnostics-command-cohesion-and-flag-model.md)

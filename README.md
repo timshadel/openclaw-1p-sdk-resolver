@@ -111,13 +111,11 @@ openclaw-1p-sdk-resolver doctor [--json]
 openclaw-1p-sdk-resolver config path [--json]
 openclaw-1p-sdk-resolver config show [--json] [--defaults] [--current-file] [--verbose]
 openclaw-1p-sdk-resolver config init [--default-vault <name>] [--write] [--force] [--json]
-openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--check]
+openclaw-1p-sdk-resolver openclaw check [--path <openclaw.json>] [--provider <alias>] [--json] [--strict] [--details]
 openclaw-1p-sdk-resolver openclaw snippet [--provider <alias>] [--command <path>] [--explain] [--quiet]
-openclaw-1p-sdk-resolver openclaw diagnose [--path <openclaw.json>] [--provider <alias>] [--json]
-openclaw-1p-sdk-resolver 1password check [--json] [--check] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
-openclaw-1p-sdk-resolver 1password diagnose [--json] [--probe-id <id>] [--debug]
+openclaw-1p-sdk-resolver 1password check [--json] [--strict] [--details] [--probe-id <id>] [--probe-timeout-ms <n>] [--debug]
 openclaw-1p-sdk-resolver 1password snippet [--default-vault <name>] [--full] [--json] [--explain] [--quiet]
-openclaw-1p-sdk-resolver 1p <check|diagnose|snippet> [...flags]
+openclaw-1p-sdk-resolver 1p <check|snippet> [...flags]
 openclaw-1p-sdk-resolver resolve --id MyAPI/token [--id Other/item] [--stdin] [--json] [--debug] [--reveal --yes]
 ```
 
@@ -131,14 +129,16 @@ Notes:
   - validates OpenClaw config path and provider wiring (read-only)
   - verifies 1Password connectivity sanity (token present + SDK init probe)
   - returns findings with actionable next steps
-- `openclaw diagnose` provides deeper troubleshooting details including resolver config/provenance.
+- `openclaw check --details` provides deeper troubleshooting details including resolver config/provenance.
 - `openclaw snippet` prints provider JSON only on `stdout` so it can be pasted directly into OpenClaw config.
 - `1password check` is the high-signal 1Password readiness command:
   - validates resolver config
   - checks token presence and SDK init status
   - optionally probes a specific id/ref safely via `--probe-id` (never prints values)
-- `1password diagnose` provides deep resolver and policy diagnostics.
+- `1password check --details` provides deep resolver and policy diagnostics.
+- `--strict` turns findings into non-zero exit code (`1`) for automation gating.
 - `1password snippet` prints resolver config JSON only on `stdout` (minimal by default, full config with `--full`).
+- This project is pre-release; removed CLI names/flags are not kept as compatibility aliases.
 - Snippet instruction text is emitted on `stderr` only:
   - default: only when `stderr` is a TTY
   - `--explain`: force instructions on `stderr`
@@ -150,7 +150,7 @@ Notes:
 - `resolve --reveal` requires explicit consent:
   - pass `--yes` for non-interactive runs
   - without `--yes`, an interactive TTY confirmation prompt is required
-- OpenClaw config path resolution precedence used by `openclaw check` and `openclaw diagnose`:
+- OpenClaw config path resolution precedence used by `openclaw check`:
 
 1. `--path <openclaw.json>`
 2. `OPENCLAW_CONFIG_PATH`
@@ -162,7 +162,7 @@ Notes:
 ## Exit Codes
 
 - `0` (`OK`): command succeeded with no blocking issues.
-- `1` (`FINDINGS`): command found non-fatal issues while running in `--check` mode.
+- `1` (`FINDINGS`): command found non-fatal issues while running in `--strict` mode.
 - `2` (`ERROR`): configuration/input problem (for example unreadable file or invalid config).
 - `3` (`RUNTIME`): runtime dependency failure (for example SDK initialization failure).
 
@@ -196,13 +196,13 @@ The snippet includes:
 ## Two-Sided Checks
 
 - OpenClaw side:
-  - `openclaw-1p-sdk-resolver openclaw check --check`
-  - `openclaw-1p-sdk-resolver openclaw diagnose --json`
+  - `openclaw-1p-sdk-resolver openclaw check --strict`
+  - `openclaw-1p-sdk-resolver openclaw check --details --json`
   - `openclaw-1p-sdk-resolver openclaw snippet`
 - 1Password side:
-  - `openclaw-1p-sdk-resolver 1password check --check`
+  - `openclaw-1p-sdk-resolver 1password check --strict`
   - `openclaw-1p-sdk-resolver 1password check --probe-id op://Vault/Item/field --json`
-  - `openclaw-1p-sdk-resolver 1password diagnose --json`
+  - `openclaw-1p-sdk-resolver 1password check --details --json`
   - `openclaw-1p-sdk-resolver 1password snippet --default-vault MainVault`
 
 ## Architecture
@@ -295,7 +295,7 @@ Recommended flow:
 1. Validate current setup:
 
 ```bash
-openclaw-1p-sdk-resolver openclaw check --check
+openclaw-1p-sdk-resolver openclaw check --strict
 ```
 
 2. Generate provider JSON:
