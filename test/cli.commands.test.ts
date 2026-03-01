@@ -77,12 +77,19 @@ describe("command cli", () => {
     });
 
     expect(code).toBe(0);
-    expect(streams.out.stdout).toContain("Doctor Report");
-    expect(streams.out.stdout).toMatch(/Config path source\s+:/);
+    expect(streams.out.stdout).toContain("DOCTOR REPORT");
+    expect(streams.out.stdout).toContain("CONFIGURATION STATUS");
+    expect(streams.out.stdout).toContain("ENVIRONMENT STATUS");
+    expect(streams.out.stdout).toContain("EFFECTIVE CONFIGURATION");
+    expect(streams.out.stdout).toContain("VALIDATION SUMMARY");
+    expect(streams.out.stdout).toContain("VALIDATION ISSUES");
     expect(streams.out.stdout).toContain("+");
     expect(streams.out.stdout).toContain("| Key");
     expect(streams.out.stdout).toContain("| Effective Value");
     expect(streams.out.stdout.includes("\t")).toBe(false);
+    expect(streams.out.stdout).toContain("| Exists");
+    expect(streams.out.stdout).toContain("| Readable");
+    expect(streams.out.stdout.includes("Config path")).toBe(false);
     expect(streams.out.stdout).toContain("| allowedIdRegex");
     expect(streams.out.stdout).toContain("| -");
   });

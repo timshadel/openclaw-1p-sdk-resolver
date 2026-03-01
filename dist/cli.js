@@ -143,18 +143,6 @@ function renderAsciiTable(columns, rows) {
     lines.push(divider);
     return lines.join("\n");
 }
-function renderStatusDetails(options) {
-    const statusRows = [
-        ["Config path source", options.pathSource],
-        ["Config path", options.path],
-        ["Config exists/readable", `${options.exists ? "yes" : "no"}/${options.readable ? "yes" : "no"}`],
-        ["Config loaded", options.loaded ? "yes" : "no"],
-        ["Token present", options.tokenPresent ? "yes" : "no"],
-        ["SDK status", options.sdkStatus]
-    ];
-    const keyWidth = Math.max(...statusRows.map(([key]) => key.length));
-    return statusRows.map(([key, value]) => `${key.padEnd(keyWidth, " ")} : ${value}`).join("\n");
-}
 function summarizeIssues(issues) {
     const warnings = issues.filter((issue) => issue.level === "warning").length;
     const errors = issues.filter((issue) => issue.level === "error").length;
@@ -244,17 +232,28 @@ async function runDoctor(args, runtime) {
         printJson(streams.stdout, payload);
     }
     else {
-        streams.stdout.write("Doctor Report\n");
-        streams.stdout.write(`${renderStatusDetails({
-            pathSource: effective.path.source,
-            path: effective.path.path ?? "(unresolved)",
-            exists: effective.path.exists,
-            readable: effective.path.readable,
-            loaded: effective.file.loaded,
-            tokenPresent,
-            sdkStatus
-        })}\n\n`);
-        streams.stdout.write("Effective config\n");
+        streams.stdout.write("DOCTOR REPORT\n\n");
+        streams.stdout.write("CONFIGURATION STATUS\n");
+        streams.stdout.write(`${renderAsciiTable([
+            { header: "Field", maxWidth: 28 },
+            { header: "Value", maxWidth: 100 }
+        ], [
+            ["Path Source", effective.path.source],
+            ["Path", effective.path.path ?? "(unresolved)"],
+            ["Exists", effective.path.exists ? "yes" : "no"],
+            ["Readable", effective.path.readable ? "yes" : "no"],
+            ["Loaded", effective.file.loaded ? "yes" : "no"],
+            ["Resolution Reason", effective.path.reason]
+        ])}\n\n`);
+        streams.stdout.write("ENVIRONMENT STATUS\n");
+        streams.stdout.write(`${renderAsciiTable([
+            { header: "Field", maxWidth: 36 },
+            { header: "Value", maxWidth: 32 }
+        ], [
+            ["OP_SERVICE_ACCOUNT_TOKEN Present", tokenPresent ? "yes" : "no"],
+            ["SDK Status", sdkStatus]
+        ])}\n\n`);
+        streams.stdout.write("EFFECTIVE CONFIGURATION\n");
         const configRows = Object.entries(effective.provenance).map(([key, entry]) => {
             const value = key === "allowedIdRegex" && entry.value instanceof RegExp ? entry.value.source : entry.value;
             return [key, displayValue(value), entry.source, entry.notes.length > 0 ? entry.notes.join(" | ") : "-"];
@@ -265,11 +264,25 @@ async function runDoctor(args, runtime) {
             { header: "Source", maxWidth: 16 },
             { header: "Notes", maxWidth: 72 }
         ], configRows)}\n`);
-        streams.stdout.write("\nValidation\n");
-        streams.stdout.write(`warnings=${summary.warnings} errors=${summary.errors}\n`);
-        for (const issue of effective.issues) {
-            streams.stdout.write(`- ${issue.level.toUpperCase()} ${issue.code}: ${issue.message}\n`);
-        }
+        streams.stdout.write("\nVALIDATION SUMMARY\n");
+        streams.stdout.write(`${renderAsciiTable([
+            { header: "Warnings", maxWidth: 10 },
+            { header: "Errors", maxWidth: 10 }
+        ], [[String(summary.warnings), String(summary.errors)]])}\n`);
+        streams.stdout.write("\nVALIDATION ISSUES\n");
+        streams.stdout.write(`${renderAsciiTable([
+            { header: "Level", maxWidth: 8 },
+            { header: "Code", maxWidth: 28 },
+            { header: "Key", maxWidth: 20 },
+            { header: "Message", maxWidth: 96 }
+        ], effective.issues.length > 0
+            ? effective.issues.map((issue) => [
+                issue.level.toUpperCase(),
+                issue.code,
+                issue.key ?? "-",
+                issue.message
+            ])
+            : [["-", "-", "-", "No validation issues."]])}\n`);
     }
     if (sdkStatus === "error") {
         return { code: 3 };
