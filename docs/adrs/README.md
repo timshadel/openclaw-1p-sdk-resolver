@@ -73,3 +73,5 @@ Use [`TEMPLATE.md`](./TEMPLATE.md) for new ADRs.
 - [`011-diagnostics-command-cohesion-and-flag-model.md`](./011-diagnostics-command-cohesion-and-flag-model.md)
 - [`012-resolver-security-boundary-and-invariants.md`](./012-resolver-security-boundary-and-invariants.md)
 - [`013-ci-security-and-ai-review-governance.md`](./013-ci-security-and-ai-review-governance.md)
+- [`014-ci-release-automation-with-changesets-and-trusted-publishing.md`](./014-ci-release-automation-with-changesets-and-trusted-publishing.md)
+- [`015-node-compatibility-baseline-and-ci-matrix-policy.md`](./015-node-compatibility-baseline-and-ci-matrix-policy.md)
