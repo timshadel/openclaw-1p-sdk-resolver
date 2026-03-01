@@ -4,13 +4,18 @@
   "description": "OpenClaw exec secrets provider backed by 1Password SDK",
   "type": "module",
   "private": true,
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "package.json"
+  ],
   "bin": {
     "openclaw-1p-sdk-resolver": "./bin/openclaw-1p-sdk-resolver"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "prepare": "pnpm build"
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=20.0.0"
