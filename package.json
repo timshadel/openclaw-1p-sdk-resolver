@@ -2,6 +2,14 @@
   "name": "openclaw-1p-sdk-resolver",
   "version": "0.2.0",
   "description": "OpenClaw exec secrets provider backed by 1Password SDK",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/timshadel/openclaw-1p-sdk-resolver"
+  },
+  "homepage": "https://github.com/timshadel/openclaw-1p-sdk-resolver",
+  "bugs": {
+    "url": "https://github.com/timshadel/openclaw-1p-sdk-resolver/issues"
+  },
   "type": "module",
   "private": false,
   "files": [
