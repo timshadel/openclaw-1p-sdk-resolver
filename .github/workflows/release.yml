@@ -64,8 +64,8 @@ jobs:
         with:
           version: pnpm version-packages
           publish: echo "Prepare mode; publish intentionally skipped"
-          commit: chore(release): version packages
-          title: chore(release): version packages
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
