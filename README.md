@@ -1,6 +1,106 @@
 # openclaw-1p-sdk-resolver
 
-Go implementation trial branch for the OpenClaw 1Password SDK resolver.
+OpenClaw exec secrets provider backed by the official 1Password Go SDK.
+
+This branch is a Go implementation trial. It reads OpenClaw exec-provider JSON from stdin, resolves requested IDs through 1Password secret references, and writes protocol JSON to stdout.
+
+## Build
+
+```bash
+go build ./cmd/openclaw-1p-sdk-resolver
+```
+
+## OpenClaw Resolver Mode
+
+No arguments runs resolver mode:
+
+```bash
+echo '{"protocolVersion":1,"ids":["MyAPI/token"]}' | ./openclaw-1p-sdk-resolver
+```
+
+The resolver returns:
+
+```json
+{"protocolVersion":1,"values":{"MyAPI/token":"resolved-secret-value"}}
+```
+
+Malformed input, missing auth, invalid IDs, SDK failures, and unresolved refs fail closed by returning valid JSON with an empty or partial `values` map. Unresolved IDs are omitted.
+
+## ID Mapping
+
+- IDs beginning with `op://` are treated as full 1Password secret references.
+- Other IDs are mapped under `OP_DEFAULT_VAULT`.
+
+Example:
+
+```text
+MyAPI/token -> op://$OP_DEFAULT_VAULT/MyAPI/token
+```
+
+## Token Contract
+
+The logical service account token input is `OP_SERVICE_ACCOUNT_TOKEN`.
+
+Supported token sources, in precedence order:
+
+1. `OP_SERVICE_ACCOUNT_TOKEN`
+2. `OP_SERVICE_ACCOUNT_TOKEN_FILE`
+3. macOS Keychain generic password
+
+The CLI never accepts raw service account tokens on argv. Human CLI commands fail fast when both `OP_SERVICE_ACCOUNT_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN_FILE` are set. Resolver mode fails closed for token-loading errors.
+
+By default, Keychain lookup uses:
+
+- service: `openclaw-1p-sdk-resolver`
+- account: `OP_SERVICE_ACCOUNT_TOKEN`
+
+Override with:
+
+```bash
+export OP_SERVICE_ACCOUNT_TOKEN_KEYCHAIN_SERVICE="openclaw-1p-sdk-resolver"
+export OP_SERVICE_ACCOUNT_TOKEN_KEYCHAIN_ACCOUNT="OP_SERVICE_ACCOUNT_TOKEN"
+```
+
+Store the token in macOS Keychain:
+
+```bash
+security add-generic-password \
+  -s openclaw-1p-sdk-resolver \
+  -a OP_SERVICE_ACCOUNT_TOKEN \
+  -w '<service-account-token>' \
+  -U
+```
+
+Do not commit service account tokens, `.env` files containing tokens, or command transcripts that include resolved secret values.
+
+## CLI Commands
+
+```text
+openclaw-1p-sdk-resolver
+openclaw-1p-sdk-resolver help
+openclaw-1p-sdk-resolver version
+openclaw-1p-sdk-resolver resolve --id <id> [--id <id>...] [--stdin] [--json] [--debug] [--reveal --yes]
+```
+
+`resolve` redacts values by default:
+
+```bash
+openclaw-1p-sdk-resolver resolve --id MyAPI/token --json
+```
+
+Only print secret values with explicit reveal confirmation:
+
+```bash
+openclaw-1p-sdk-resolver resolve --id MyAPI/token --reveal --yes
+```
+
+## Development
+
+```bash
+go test ./...
+go test -race ./...
+go vet ./...
+```
 
 ## Governance Lifecycle
 
