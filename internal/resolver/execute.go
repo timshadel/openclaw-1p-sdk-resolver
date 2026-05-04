@@ -12,9 +12,10 @@ import (
 type Runtime struct {
 	Env         map[string]string
 	TokenFile   auth.FileReader
-	Keychain    auth.KeychainReader
+	Keyring     auth.Keyring
 	Resolver    SecretResolver
 	NewResolver func(ctx context.Context, token string, clientName string, clientVersion string) (SecretResolver, error)
+	CheckSDK    func(ctx context.Context, token string, clientName string, clientVersion string) error
 }
 
 // ExecuteProtocol runs OpenClaw exec-provider resolver mode.
@@ -25,7 +26,7 @@ func ExecuteProtocol(ctx context.Context, stdin io.Reader, stdout io.Writer, run
 	}
 	empty := protocol.EmptyResponse(request.ProtocolVersion)
 	config := LoadConfig(runtime.Env)
-	token, err := auth.LoadServiceAccountToken(ctx, runtime.Env, runtime.TokenFile, runtime.Keychain)
+	token, _, err := auth.LoadRuntimeToken(ctx, runtime.Env, runtime.Keyring)
 	if err != nil {
 		return protocol.WriteResponse(stdout, empty)
 	}

@@ -36,7 +36,8 @@ func TestExecuteProtocolResolvesPartialSuccess(t *testing.T) {
 		bytes.NewBufferString(`{"protocolVersion":1,"ids":["MyAPI/token","Other/password"]}`),
 		&stdout,
 		Runtime{
-			Env:      map[string]string{auth.ServiceAccountTokenEnv: "token", "OP_DEFAULT_VAULT": "Vault"},
+			Env:      map[string]string{auth.ServiceAccountTokenNameEnv: "main", "OP_DEFAULT_VAULT": "Vault"},
+			Keyring:  fakeKeyring{token: "token"},
 			Resolver: fakeResolver{values: map[string]string{"op://Vault/MyAPI/token": "secret"}},
 		},
 	)
@@ -62,15 +63,16 @@ func TestExecuteProtocolFailsClosed(t *testing.T) {
 		stdin string
 		env   map[string]string
 	}{
-		{name: "invalid json", stdin: `{`, env: map[string]string{auth.ServiceAccountTokenEnv: "token"}},
-		{name: "missing token", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{}},
+		{name: "invalid json", stdin: `{`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}},
+		{name: "missing token", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}},
+		{name: "env token present", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main", auth.ServiceAccountTokenEnv: "token"}},
 	}
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var stdout bytes.Buffer
-			err := ExecuteProtocol(context.Background(), bytes.NewBufferString(tt.stdin), &stdout, Runtime{Env: tt.env, Keychain: missingKeychain{}})
+			err := ExecuteProtocol(context.Background(), bytes.NewBufferString(tt.stdin), &stdout, Runtime{Env: tt.env, Keyring: fakeKeyring{}})
 			if err != nil {
 				t.Fatalf("ExecuteProtocol: %v", err)
 			}
@@ -85,8 +87,21 @@ func TestExecuteProtocolFailsClosed(t *testing.T) {
 	}
 }
 
-type missingKeychain struct{}
+type fakeKeyring struct {
+	token string
+}
 
-func (missingKeychain) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
-	return "", auth.ErrKeychainNotFound
+func (f fakeKeyring) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
+	if f.token == "" {
+		return "", auth.ErrKeyringNotFound
+	}
+	return f.token, nil
+}
+
+func (f fakeKeyring) ExistsGenericPassword(ctx context.Context, service string, account string) (bool, error) {
+	return f.token != "", nil
+}
+
+func (f fakeKeyring) WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error {
+	return nil
 }

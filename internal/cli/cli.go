@@ -2,12 +2,9 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/auth"
@@ -41,7 +38,8 @@ func ExecuteWithRuntime(ctx context.Context, args []string, stdin io.Reader, std
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.AddCommand(newVersionCommand(stdout))
-	root.AddCommand(newResolveCommand(ctx, stdin, stdout, runtime))
+	root.AddCommand(newTokenCommand(ctx, stdout, runtime))
+	root.AddCommand(newDoctorCommand(ctx, stdout, runtime))
 	return root.Execute()
 }
 
@@ -57,142 +55,187 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 	}
 }
 
-func newResolveCommand(ctx context.Context, stdin io.Reader, stdout io.Writer, runtime resolver.Runtime) *cobra.Command {
-	var ids []string
-	var fromStdin bool
+func newTokenCommand(ctx context.Context, stdout io.Writer, runtime resolver.Runtime) *cobra.Command {
+	var write bool
+	var force bool
 	var asJSON bool
-	var debug bool
-	var reveal bool
-	var yes bool
 	cmd := &cobra.Command{
-		Use:   "resolve --id <id>",
-		Short: "Resolve one or more 1Password secret references",
+		Use:   "token",
+		Short: "Import the 1Password service account token into the system keyring",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runResolve(ctx, stdin, stdout, runtime, resolveOptions{
-				IDs:       ids,
-				FromStdin: fromStdin,
-				JSON:      asJSON,
-				Debug:     debug,
-				Reveal:    reveal,
-				Yes:       yes,
-			})
+			return runToken(ctx, stdout, runtime, tokenOptions{Write: write, Force: force, JSON: asJSON})
 		},
 	}
-	cmd.Flags().StringArrayVar(&ids, "id", nil, "ID or op:// secret reference to resolve")
-	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read IDs from stdin, one per line")
+	cmd.Flags().BoolVar(&write, "write", false, "Write token to the system keyring")
+	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing system keyring token")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Write JSON output")
-	cmd.Flags().BoolVar(&debug, "debug", false, "Include safe unresolved reason codes")
-	cmd.Flags().BoolVar(&reveal, "reveal", false, "Print resolved secret values")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm reveal mode non-interactively")
 	return cmd
 }
 
-type resolveOptions struct {
-	IDs       []string
-	FromStdin bool
-	JSON      bool
-	Debug     bool
-	Reveal    bool
-	Yes       bool
-}
-
-type resolveRow struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Output string `json:"output"`
-	Reason string `json:"reason,omitempty"`
-}
-
-func runResolve(ctx context.Context, stdin io.Reader, stdout io.Writer, runtime resolver.Runtime, options resolveOptions) error {
-	if options.Reveal && !options.Yes {
-		return fmt.Errorf("reveal requires --yes")
+func newDoctorCommand(ctx context.Context, stdout io.Writer, runtime resolver.Runtime) *cobra.Command {
+	var checkSDK bool
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check system keyring and 1Password SDK readiness",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDoctor(ctx, stdout, runtime, doctorOptions{SDK: checkSDK, JSON: asJSON})
+		},
 	}
-	config := resolver.LoadConfig(runtime.Env)
-	token, err := auth.LoadServiceAccountToken(ctx, runtime.Env, runtime.TokenFile, runtime.Keychain)
+	cmd.Flags().BoolVar(&checkSDK, "sdk", false, "Check coarse 1Password SDK auth")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Write JSON output")
+	return cmd
+}
+
+type tokenOptions struct {
+	Write bool
+	Force bool
+	JSON  bool
+}
+
+type tokenPayload struct {
+	Status             string           `json:"status"`
+	DryRun             bool             `json:"dryRun"`
+	WouldWrite         bool             `json:"wouldWrite"`
+	Wrote              bool             `json:"wrote"`
+	Existed            bool             `json:"existed"`
+	Forced             bool             `json:"forced"`
+	TokenSource        auth.TokenSource `json:"tokenSource"`
+	TokenProof         auth.TokenProof  `json:"tokenProof"`
+	AccountFingerprint string           `json:"accountFingerprint"`
+}
+
+func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options tokenOptions) error {
+	target, err := auth.TargetFromEnv(runtime.Env)
 	if err != nil {
 		return err
 	}
-	allIDs := append([]string{}, options.IDs...)
-	if options.FromStdin {
-		body, err := io.ReadAll(stdin)
-		if err != nil {
-			return fmt.Errorf("read stdin ids: %w", err)
-		}
-		for _, line := range strings.Split(string(body), "\n") {
-			if trimmed := strings.TrimSpace(line); trimmed != "" {
-				allIDs = append(allIDs, trimmed)
-			}
-		}
+	token, err := auth.LoadImportToken(runtime.Env, runtime.TokenFile)
+	if err != nil {
+		return err
 	}
-	requested := resolver.BuildRequestedRefs(allIDs, config.DefaultVault)
-	if len(requested) == 0 {
-		return fmt.Errorf("no valid ids to resolve")
+	keyring := runtime.Keyring
+	if keyring == nil {
+		keyring = auth.SystemKeyring{}
 	}
-	refs := make([]string, 0, len(requested))
-	refToID := make(map[string]string, len(requested))
-	for _, item := range requested {
-		refs = append(refs, item.Ref)
-		refToID[item.Ref] = item.ID
+	existed, err := keyring.ExistsGenericPassword(ctx, target.Service, target.Account)
+	if err != nil {
+		return err
 	}
-	secretResolver := runtime.Resolver
-	if secretResolver == nil {
-		newResolver := runtime.NewResolver
-		if newResolver == nil {
-			newResolver = func(ctx context.Context, token string, clientName string, clientVersion string) (resolver.SecretResolver, error) {
-				return resolver.NewOnePasswordResolver(ctx, token, clientName, clientVersion)
-			}
+	payload := tokenPayload{
+		Status:             "dry-run",
+		DryRun:             !options.Write,
+		WouldWrite:         true,
+		Wrote:              false,
+		Existed:            existed,
+		Forced:             options.Force,
+		TokenSource:        token.Source,
+		TokenProof:         auth.TokenProofFor(token.Token),
+		AccountFingerprint: target.AccountFingerprint(),
+	}
+	if options.Write {
+		if existed && !options.Force {
+			return auth.ErrKeyringItemExists
 		}
-		secretResolver, err = newResolver(ctx, token.Token, config.ClientName, config.ClientVersion)
-		if err != nil {
+		if err := keyring.WriteGenericPassword(ctx, target.Service, target.Account, token.Token, options.Force); err != nil {
 			return err
 		}
+		payload.Status = "written"
+		payload.Wrote = true
 	}
-	resolved, err := secretResolver.ResolveRefs(ctx, refs)
+	return writeTokenPayload(stdout, payload, options.JSON)
+}
+
+type doctorOptions struct {
+	SDK  bool
+	JSON bool
+}
+
+type doctorPayload struct {
+	Status             string           `json:"status"`
+	Keyring            string           `json:"keyring"`
+	SDK                string           `json:"sdk"`
+	TokenSource        auth.TokenSource `json:"tokenSource"`
+	TokenProof         auth.TokenProof  `json:"tokenProof"`
+	AccountFingerprint string           `json:"accountFingerprint"`
+}
+
+func runDoctor(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options doctorOptions) error {
+	config := resolver.LoadConfig(runtime.Env)
+	token, target, err := auth.LoadRuntimeToken(ctx, runtime.Env, runtime.Keyring)
 	if err != nil {
 		return err
 	}
-	rows := make([]resolveRow, 0, len(requested))
-	for _, ref := range refs {
-		id := refToID[ref]
-		value, ok := resolved[ref]
-		if !ok {
-			row := resolveRow{ID: id, Status: "unresolved", Output: "missing"}
-			if options.Debug {
-				row.Reason = "sdk-unresolved"
-			}
-			rows = append(rows, row)
-			continue
-		}
-		output := redact(value)
-		if options.Reveal {
-			output = value
-		}
-		row := resolveRow{ID: id, Status: "resolved", Output: output}
-		if options.Debug {
-			row.Reason = "resolved"
-		}
-		rows = append(rows, row)
+	payload := doctorPayload{
+		Status:             "ok",
+		Keyring:            "ok",
+		SDK:                "skipped",
+		TokenSource:        token.Source,
+		TokenProof:         auth.TokenProofFor(token.Token),
+		AccountFingerprint: target.AccountFingerprint(),
 	}
-	if options.JSON {
-		payload := map[string]any{"debug": options.Debug, "reveal": options.Reveal, "results": rows}
+	if options.SDK {
+		checkSDK := runtime.CheckSDK
+		if checkSDK == nil {
+			checkSDK = resolver.CheckOnePasswordSDK
+		}
+		if err := checkSDK(ctx, token.Token, config.ClientName, config.ClientVersion); err != nil {
+			payload.Status = "failed"
+			payload.SDK = "failed"
+			if writeErr := writeDoctorPayload(stdout, payload, options.JSON); writeErr != nil {
+				return writeErr
+			}
+			return fmt.Errorf("sdk check failed")
+		}
+		payload.SDK = "ok"
+	}
+	return writeDoctorPayload(stdout, payload, options.JSON)
+}
+
+func writeTokenPayload(stdout io.Writer, payload tokenPayload, asJSON bool) error {
+	if asJSON {
 		return json.NewEncoder(stdout).Encode(payload)
 	}
-	for _, row := range rows {
-		if options.Debug {
-			if _, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", row.ID, row.Status, row.Output, row.Reason); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := fmt.Fprintf(stdout, "%s\t%s\t%s\n", row.ID, row.Status, row.Output); err != nil {
-			return err
-		}
+	if _, err := fmt.Fprintf(stdout, "status: %s\n", payload.Status); err != nil {
+		return err
 	}
-	return nil
+	if _, err := fmt.Fprintf(stdout, "dryRun: %t\n", payload.DryRun); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "existed: %t\n", payload.Existed); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "accountSHA256: %s\n", payload.AccountFingerprint); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "tokenLast3: %s\n", payload.TokenProof.Last3); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(stdout, "tokenSHA256: %s\n", payload.TokenProof.SHA256)
+	return err
 }
 
-func redact(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return fmt.Sprintf("len=%d sha256=%s", len(value), hex.EncodeToString(sum[:])[:12])
+func writeDoctorPayload(stdout io.Writer, payload doctorPayload, asJSON bool) error {
+	if asJSON {
+		return json.NewEncoder(stdout).Encode(payload)
+	}
+	if _, err := fmt.Fprintf(stdout, "status: %s\n", payload.Status); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "keyring: %s\n", payload.Keyring); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "sdk: %s\n", payload.SDK); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "accountSHA256: %s\n", payload.AccountFingerprint); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "tokenLast3: %s\n", payload.TokenProof.Last3); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(stdout, "tokenSHA256: %s\n", payload.TokenProof.SHA256)
+	return err
 }

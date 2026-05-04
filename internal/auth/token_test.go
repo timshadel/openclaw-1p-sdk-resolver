@@ -6,14 +6,15 @@ import (
 	"testing"
 )
 
-type fakeKeychain struct {
+type fakeKeyring struct {
 	token   string
 	service string
 	account string
+	exists  bool
 	err     error
 }
 
-func (f *fakeKeychain) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
+func (f *fakeKeyring) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
 	f.service = service
 	f.account = account
 	if f.err != nil {
@@ -22,18 +23,47 @@ func (f *fakeKeychain) ReadGenericPassword(ctx context.Context, service string, 
 	return f.token, nil
 }
 
-func TestLoadServiceAccountToken(t *testing.T) {
+func (f *fakeKeyring) ExistsGenericPassword(ctx context.Context, service string, account string) (bool, error) {
+	f.service = service
+	f.account = account
+	return f.exists, f.err
+}
+
+func (f *fakeKeyring) WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error {
+	f.service = service
+	f.account = account
+	f.token = password
+	return f.err
+}
+
+func TestTargetFromEnv(t *testing.T) {
+	t.Parallel()
+	target, err := TargetFromEnv(map[string]string{ServiceAccountTokenNameEnv: "main"})
+	if err != nil {
+		t.Fatalf("TargetFromEnv: %v", err)
+	}
+	if target.Service != "openclaw-1p-sdk-resolver" || target.Account != "tokens/main" {
+		t.Fatalf("target = %#v", target)
+	}
+	for _, name := range []string{"", "bad/name", "bad\nname", "../bad"} {
+		_, err := TargetFromEnv(map[string]string{ServiceAccountTokenNameEnv: name})
+		if err == nil {
+			t.Fatalf("expected invalid name error for %q", name)
+		}
+	}
+}
+
+func TestLoadImportToken(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
 		env     map[string]string
 		file    string
-		key     *fakeKeychain
 		want    TokenResult
 		wantErr error
 	}{
 		{
-			name: "env token wins",
+			name: "env token works",
 			env:  map[string]string{ServiceAccountTokenEnv: " token "},
 			want: TokenResult{Token: "token", Source: TokenSourceEnv},
 		},
@@ -49,18 +79,8 @@ func TestLoadServiceAccountToken(t *testing.T) {
 			want: TokenResult{Token: "file-token", Source: TokenSourceFile},
 		},
 		{
-			name: "keychain fallback works",
-			env: map[string]string{
-				KeychainServiceEnv: "svc",
-				KeychainAccountEnv: "acct",
-			},
-			key:  &fakeKeychain{token: "key-token"},
-			want: TokenResult{Token: "key-token", Source: TokenSourceKeychain},
-		},
-		{
 			name:    "missing token fails",
 			env:     map[string]string{},
-			key:     &fakeKeychain{err: ErrKeychainNotFound},
 			wantErr: ErrTokenMissing,
 		},
 	}
@@ -74,11 +94,7 @@ func TestLoadServiceAccountToken(t *testing.T) {
 				}
 				return []byte(tt.file), nil
 			}
-			var keychain KeychainReader = &fakeKeychain{err: ErrKeychainNotFound}
-			if tt.key != nil {
-				keychain = tt.key
-			}
-			got, err := LoadServiceAccountToken(context.Background(), tt.env, readFile, keychain)
+			got, err := LoadImportToken(tt.env, readFile)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error = %v, want %v", err, tt.wantErr)
 			}
@@ -88,11 +104,30 @@ func TestLoadServiceAccountToken(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("got %#v, want %#v", got, tt.want)
 			}
-			if tt.name == "keychain fallback works" {
-				if tt.key.service != "svc" || tt.key.account != "acct" {
-					t.Fatalf("keychain lookup = %s/%s", tt.key.service, tt.key.account)
-				}
-			}
 		})
+	}
+}
+
+func TestLoadRuntimeTokenUsesKeyringOnly(t *testing.T) {
+	t.Parallel()
+	keyring := &fakeKeyring{token: "key-token"}
+	got, target, err := LoadRuntimeToken(context.Background(), map[string]string{ServiceAccountTokenNameEnv: "main"}, keyring)
+	if err != nil {
+		t.Fatalf("LoadRuntimeToken: %v", err)
+	}
+	if got != (TokenResult{Token: "key-token", Source: TokenSourceKeyring}) {
+		t.Fatalf("got %#v", got)
+	}
+	if target.Account != "tokens/main" || keyring.account != "tokens/main" {
+		t.Fatalf("target/keyring = %#v/%s", target, keyring.account)
+	}
+	for _, env := range []map[string]string{
+		{ServiceAccountTokenNameEnv: "main", ServiceAccountTokenEnv: ""},
+		{ServiceAccountTokenNameEnv: "main", ServiceAccountTokenFileEnv: ""},
+	} {
+		_, _, err := LoadRuntimeToken(context.Background(), env, keyring)
+		if !errors.Is(err, ErrTokenRuntimeEnvPresent) {
+			t.Fatalf("error = %v, want ErrTokenRuntimeEnvPresent", err)
+		}
 	}
 }

@@ -39,37 +39,45 @@ MyAPI/token -> op://$OP_DEFAULT_VAULT/MyAPI/token
 
 ## Token Contract
 
-The logical service account token input is `OP_SERVICE_ACCOUNT_TOKEN`.
+The service account token is selected by name:
 
-Supported token sources, in precedence order:
+```bash
+export OP_SERVICE_ACCOUNT_TOKEN_NAME="main"
+```
 
-1. `OP_SERVICE_ACCOUNT_TOKEN`
-2. `OP_SERVICE_ACCOUNT_TOKEN_FILE`
-3. macOS Keychain generic password
-
-The CLI never accepts raw service account tokens on argv. Human CLI commands fail fast when both `OP_SERVICE_ACCOUNT_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN_FILE` are set. Resolver mode fails closed for token-loading errors.
-
-By default, Keychain lookup uses:
+The raw token name is treated as sensitive operational metadata and should not be logged or passed on argv. Runtime commands use this name to read the system keyring item through `github.com/99designs/keyring`:
 
 - service: `openclaw-1p-sdk-resolver`
-- account: `OP_SERVICE_ACCOUNT_TOKEN`
+- account: `tokens/<OP_SERVICE_ACCOUNT_TOKEN_NAME>`
 
-Override with:
-
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN_KEYCHAIN_SERVICE="openclaw-1p-sdk-resolver"
-export OP_SERVICE_ACCOUNT_TOKEN_KEYCHAIN_ACCOUNT="OP_SERVICE_ACCOUNT_TOKEN"
-```
-
-Store the token in macOS Keychain:
+The only command allowed to read token values from env or file is `token`. These inputs are write-only import sources:
 
 ```bash
-security add-generic-password \
-  -s openclaw-1p-sdk-resolver \
-  -a OP_SERVICE_ACCOUNT_TOKEN \
-  -w '<service-account-token>' \
-  -U
+export OP_SERVICE_ACCOUNT_TOKEN="..."
+# or
+export OP_SERVICE_ACCOUNT_TOKEN_FILE="/path/to/token-file"
 ```
+
+Exactly one token value source must be set for `token`. Resolver mode and `doctor` reject `OP_SERVICE_ACCOUNT_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN_FILE` when either variable is present.
+
+Import is dry run by default:
+
+```bash
+openclaw-1p-sdk-resolver token
+openclaw-1p-sdk-resolver token --write
+openclaw-1p-sdk-resolver token --write --force
+```
+
+Existing keyring items fail unless `--force` is provided. The command never prints the token or raw token name. It may print token SHA256, token last 3 chars, and a keyring account fingerprint.
+
+`doctor` verifies the runtime path:
+
+```bash
+openclaw-1p-sdk-resolver doctor
+openclaw-1p-sdk-resolver doctor --sdk
+```
+
+`doctor --sdk` creates a 1Password SDK client with the keyring token and performs a coarse vault-list auth check without printing vault names, counts, or secret refs.
 
 Do not commit service account tokens, `.env` files containing tokens, or command transcripts that include resolved secret values.
 
@@ -79,19 +87,8 @@ Do not commit service account tokens, `.env` files containing tokens, or command
 openclaw-1p-sdk-resolver
 openclaw-1p-sdk-resolver help
 openclaw-1p-sdk-resolver version
-openclaw-1p-sdk-resolver resolve --id <id> [--id <id>...] [--stdin] [--json] [--debug] [--reveal --yes]
-```
-
-`resolve` redacts values by default:
-
-```bash
-openclaw-1p-sdk-resolver resolve --id MyAPI/token --json
-```
-
-Only print secret values with explicit reveal confirmation:
-
-```bash
-openclaw-1p-sdk-resolver resolve --id MyAPI/token --reveal --yes
+openclaw-1p-sdk-resolver token [--write] [--force] [--json]
+openclaw-1p-sdk-resolver doctor [--sdk] [--json]
 ```
 
 ## Development
