@@ -43,6 +43,13 @@
 - A written repository plan may be completed in one commit or in multiple commits, depending on the natural shape of the work.
 - A written repository plan is complete when its intended implementation and required validation are finished, the completed work has been committed, and the working directory is clean.
 - Git actions must run in series and never in parallel because concurrent Git operations create avoidable lock conflicts and unnecessary user-facing failures.
+- Treat any push to a shared remote branch as publication. In a public repository, pushed commits may be fetched, built, mirrored, cached, released, or used by automation immediately.
+- Publication to `main` must be the final step after local branch identity and history are correct. Before pushing `main`, the checked-out local branch must be `main`, point at the intended commit, and track `origin/main`.
+- Never push with a cross-branch refspec such as `some-branch:main`. Never push to `main` while checked out on a differently named branch.
+- Before publishing `main`, inspect local `main`, the current branch, and `origin/main`. If local `main` is divergent or contains commits not on `origin/main`, pause and explain the exact commits and ask the operator how to handle them.
+- Do not assume unexpected local `main` commits are disposable. Local branch work is the safe place to find and fix errors before they become shared remote state.
+- If sandbox permissions block local branch rename, branch deletion, upstream setup, or other local metadata repair, pause and explain the blocker before any remote push.
+- The only allowed normal publication form for `main` is a same-name branch push after local state is truthful, for example `git push origin main`.
 - The last implementation step in every written repository plan must be to use the `git-workflow` skill to finish committing the work completed for that plan and leave the working directory clean.
 - After a written repository plan is complete, additional trivial follow-up work may proceed without reopening the completed plan or creating a new plan.
 - Create a new written repository plan for follow-up work only when that follow-up work is itself non-trivial.
