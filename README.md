@@ -10,6 +10,24 @@ This branch is a Go implementation trial. It reads OpenClaw exec-provider JSON f
 go build ./cmd/openclaw-1p-sdk-resolver
 ```
 
+## Release
+
+Tagged releases are built by GoReleaser through GitHub Actions:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Local release checks:
+
+```bash
+goreleaser check
+goreleaser build --snapshot --clean
+```
+
+The current release config builds macOS archives for `darwin/arm64` and `darwin/amd64`. Homebrew publishing is intentionally not enabled yet; add it only after choosing the target tap and release token model.
+
 ## OpenClaw Resolver Mode
 
 No arguments runs resolver mode:

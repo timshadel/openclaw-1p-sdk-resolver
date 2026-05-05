@@ -1,0 +1,54 @@
+version: 2
+
+project_name: openclaw-1p-sdk-resolver
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: openclaw-1p-sdk-resolver
+    main: ./cmd/openclaw-1p-sdk-resolver
+    binary: openclaw-1p-sdk-resolver
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w
+      - -X github.com/timshadel/openclaw-1p-sdk-resolver/internal/cli.version={{ .Version }}
+      - -X github.com/timshadel/openclaw-1p-sdk-resolver/internal/cli.commit={{ .Commit }}
+      - -X github.com/timshadel/openclaw-1p-sdk-resolver/internal/cli.date={{ .Date }}
+
+archives:
+  - id: default
+    ids:
+      - openclaw-1p-sdk-resolver
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: timshadel
+    name: openclaw-1p-sdk-resolver

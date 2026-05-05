@@ -12,7 +12,11 @@ import (
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/resolver"
 )
 
-const version = "0.1.0"
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 // Execute runs the CLI.
 func Execute(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -49,7 +53,7 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 		Short: "Print version",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(stdout, "openclaw-1p-sdk-resolver %s\n", version)
+			_, err := fmt.Fprintf(stdout, "openclaw-1p-sdk-resolver %s (%s, %s)\n", version, commit, date)
 			return err
 		},
 	}
