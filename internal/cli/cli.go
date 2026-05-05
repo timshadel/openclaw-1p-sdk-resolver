@@ -55,6 +55,7 @@ func ExecuteWithRuntime(ctx context.Context, args []string, stdin io.Reader, std
 	root.SetErr(stderr)
 	root.AddCommand(newVersionCommand(stdout))
 	root.AddCommand(newTokenCommand(ctx, stdout, runtime))
+	root.AddCommand(newTrustCommand(ctx, stdout, runtime))
 	root.AddCommand(newDoctorCommand(ctx, stdout, runtime))
 	return root.Execute()
 }
@@ -102,6 +103,33 @@ func newDoctorCommand(ctx context.Context, stdout io.Writer, runtime resolver.Ru
 	}
 	cmd.Flags().BoolVar(&checkSDK, "sdk", false, "Check coarse 1Password SDK auth")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Write JSON output")
+	return cmd
+}
+
+func newTrustCommand(ctx context.Context, stdout io.Writer, runtime resolver.Runtime) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "trust",
+		Short: "Manage current-app Keychain trust for the selected token",
+		Args:  cobra.NoArgs,
+	}
+	cmd.PersistentFlags().BoolVar(&asJSON, "json", false, "Write JSON output")
+	cmd.AddCommand(&cobra.Command{
+		Use:   "update",
+		Short: "Trust the current app for the selected keyring token",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTrustUpdate(ctx, stdout, runtime, trustOptions{JSON: asJSON})
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "check",
+		Short: "Check current-app Keychain trust without showing trust UI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTrustCheck(ctx, stdout, runtime, trustOptions{JSON: asJSON})
+		},
+	})
 	return cmd
 }
 
@@ -198,6 +226,90 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 type doctorOptions struct {
 	SDK  bool
 	JSON bool
+}
+
+type trustOptions struct {
+	JSON bool
+}
+
+type trustPayload struct {
+	Status             string `json:"status"`
+	Trusted            bool   `json:"trusted"`
+	Updated            bool   `json:"updated"`
+	AccountFingerprint string `json:"accountFingerprint"`
+}
+
+func runTrustUpdate(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options trustOptions) error {
+	logs := logsOrNop(runtime)
+	target, err := auth.TargetFromEnv(runtime.Env)
+	if err != nil {
+		logs.Error.ErrorContext(ctx, "trust target load failed",
+			slog.String("error", err.Error()),
+		)
+		return err
+	}
+	keyringTrust, err := trustKeyring(runtime)
+	if err != nil {
+		return err
+	}
+	if err := keyringTrust.TrustCurrentApplication(ctx, target.Service, target.Account); err != nil {
+		logs.Error.ErrorContext(ctx, "keyring trust update failed",
+			slog.String("account_sha256", target.AccountFingerprint()),
+			slog.String("error", err.Error()),
+		)
+		return err
+	}
+	logs.Info.InfoContext(ctx, "keyring trust updated",
+		slog.String("account_sha256", target.AccountFingerprint()),
+	)
+	return writeTrustPayload(stdout, trustPayload{
+		Status:             "updated",
+		Trusted:            true,
+		Updated:            true,
+		AccountFingerprint: target.AccountFingerprint(),
+	}, options.JSON)
+}
+
+func runTrustCheck(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options trustOptions) error {
+	logs := logsOrNop(runtime)
+	target, err := auth.TargetFromEnv(runtime.Env)
+	if err != nil {
+		logs.Error.ErrorContext(ctx, "trust target load failed",
+			slog.String("error", err.Error()),
+		)
+		return err
+	}
+	keyringTrust, err := trustKeyring(runtime)
+	if err != nil {
+		return err
+	}
+	if err := keyringTrust.CheckCurrentApplicationTrusted(ctx, target.Service, target.Account); err != nil {
+		logs.Error.ErrorContext(ctx, "keyring trust check failed",
+			slog.String("account_sha256", target.AccountFingerprint()),
+			slog.String("error", err.Error()),
+		)
+		return err
+	}
+	logs.Info.InfoContext(ctx, "keyring trust check succeeded",
+		slog.String("account_sha256", target.AccountFingerprint()),
+	)
+	return writeTrustPayload(stdout, trustPayload{
+		Status:             "trusted",
+		Trusted:            true,
+		Updated:            false,
+		AccountFingerprint: target.AccountFingerprint(),
+	}, options.JSON)
+}
+
+func trustKeyring(runtime resolver.Runtime) (auth.KeyringTrust, error) {
+	if runtime.Keyring == nil {
+		return auth.SystemKeyring{}, nil
+	}
+	keyringTrust, ok := runtime.Keyring.(auth.KeyringTrust)
+	if !ok {
+		return nil, fmt.Errorf("keyring trust operations unavailable")
+	}
+	return keyringTrust, nil
 }
 
 type doctorPayload struct {
@@ -312,4 +424,25 @@ func writeDoctorPayload(stdout io.Writer, payload doctorPayload, asJSON bool) er
 	}
 	_, err := fmt.Fprintf(stdout, "tokenSHA256: %s\n", payload.TokenProof.SHA256)
 	return err
+}
+
+func writeTrustPayload(stdout io.Writer, payload trustPayload, asJSON bool) error {
+	if asJSON {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(payload)
+	}
+	if _, err := fmt.Fprintf(stdout, "status: %s\n", payload.Status); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "trusted: %t\n", payload.Trusted); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "updated: %t\n", payload.Updated); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "account_sha256: %s\n", payload.AccountFingerprint); err != nil {
+		return err
+	}
+	return nil
 }

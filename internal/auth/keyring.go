@@ -16,6 +16,9 @@ var ErrKeyringNotFound = errString("keyring token not found")
 // ErrKeyringItemExists reports that a Keyring item already exists.
 var ErrKeyringItemExists = errString("keyring token already exists")
 
+// ErrKeyringNotTrusted reports that the current app cannot read the item without a trust prompt.
+var ErrKeyringNotTrusted = errString("keyring token not trusted for current app")
+
 type errString string
 
 func (e errString) Error() string {
@@ -27,6 +30,12 @@ type Keyring interface {
 	ReadGenericPassword(ctx context.Context, service string, account string) (string, error)
 	ExistsGenericPassword(ctx context.Context, service string, account string) (bool, error)
 	WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error
+}
+
+// KeyringTrust updates and checks current-application trust for a keyring item.
+type KeyringTrust interface {
+	TrustCurrentApplication(ctx context.Context, service string, account string) error
+	CheckCurrentApplicationTrusted(ctx context.Context, service string, account string) error
 }
 
 // SystemKeyring stores credentials through github.com/99designs/keyring.
@@ -87,17 +96,22 @@ func (SystemKeyring) WriteGenericPassword(ctx context.Context, service string, a
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("keyring write cancelled: %w", err)
 	}
-	ring, err := openKeyring(service)
+	ring, err := openTrustedKeyring(service)
 	if err != nil {
 		return err
 	}
-	if !force {
-		exists, err := SystemKeyring{}.ExistsGenericPassword(ctx, service, account)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return ErrKeyringItemExists
+	exists, err := SystemKeyring{}.ExistsGenericPassword(ctx, service, account)
+	if err != nil {
+		return err
+	}
+	if exists && !force {
+		return ErrKeyringItemExists
+	}
+	if exists {
+		if err := ring.Remove(account); errors.Is(err, keyring.ErrKeyNotFound) {
+			return ErrKeyringNotFound
+		} else if err != nil {
+			return errors.New("keyring write failed")
 		}
 	}
 	if err := ring.Set(keyring.Item{
@@ -111,10 +125,61 @@ func (SystemKeyring) WriteGenericPassword(ctx context.Context, service string, a
 	return nil
 }
 
+// TrustCurrentApplication rewrites an existing credential so macOS trusts the writing app.
+func (SystemKeyring) TrustCurrentApplication(ctx context.Context, service string, account string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("keyring trust update cancelled: %w", err)
+	}
+	ring, err := openKeyring(service)
+	if err != nil {
+		return err
+	}
+	item, err := ring.Get(account)
+	if errors.Is(err, keyring.ErrKeyNotFound) {
+		return ErrKeyringNotFound
+	}
+	if err != nil {
+		return errors.New("keyring read failed")
+	}
+	if item.Label == "" {
+		item.Label = service
+	}
+	if item.Description == "" {
+		item.Description = "OpenClaw 1Password resolver service account token"
+	}
+
+	trustedRing, err := openTrustedKeyring(service)
+	if err != nil {
+		return err
+	}
+	if err := ring.Remove(account); errors.Is(err, keyring.ErrKeyNotFound) {
+		return ErrKeyringNotFound
+	} else if err != nil {
+		return errors.New("keyring trust update failed")
+	}
+	if err := trustedRing.Set(item); err != nil {
+		_ = ring.Set(item)
+		return errors.New("keyring trust update failed")
+	}
+	return nil
+}
+
 func openKeyring(service string) (keyring.Keyring, error) {
 	ring, err := keyring.Open(keyring.Config{
 		ServiceName:                    service,
 		KeychainAccessibleWhenUnlocked: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open keyring: %w", err)
+	}
+	return ring, nil
+}
+
+func openTrustedKeyring(service string) (keyring.Keyring, error) {
+	ring, err := keyring.Open(keyring.Config{
+		ServiceName:                    service,
+		KeychainAccessibleWhenUnlocked: true,
+		KeychainTrustApplication:       true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open keyring: %w", err)

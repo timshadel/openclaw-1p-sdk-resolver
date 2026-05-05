@@ -97,6 +97,20 @@ openclaw-1p-sdk-resolver token --write --force
 
 Existing keyring items fail unless `--force` is provided. The command never prints the token or raw token name. It may print token SHA256, token last 3 chars, and a keyring account fingerprint.
 
+On macOS, token writes trust the writing application for the selected Keychain item. After installing or upgrading the Homebrew cask, run this from the installed binary's runtime environment to update an existing item for the current app:
+
+```bash
+openclaw-1p-sdk-resolver trust update
+```
+
+To verify the current app can read the selected item without opening Keychain trust UI:
+
+```bash
+openclaw-1p-sdk-resolver trust check
+```
+
+Both commands use `OCOP_SERVICE_ACCOUNT_TOKEN_NAME` to select exactly one token item. They do not accept token names on argv and do not mass-update trust.
+
 `doctor` verifies the runtime path:
 
 ```bash
@@ -115,6 +129,8 @@ openclaw-1p-sdk-resolver
 openclaw-1p-sdk-resolver help
 openclaw-1p-sdk-resolver version
 openclaw-1p-sdk-resolver token [--write] [--force] [--json]
+openclaw-1p-sdk-resolver trust update [--json]
+openclaw-1p-sdk-resolver trust check [--json]
 openclaw-1p-sdk-resolver doctor [--sdk] [--json]
 ```
 

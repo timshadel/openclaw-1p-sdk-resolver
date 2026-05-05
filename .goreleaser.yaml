@@ -47,6 +47,14 @@ homebrew_casks:
     homepage: https://github.com/timshadel/openclaw-1p-sdk-resolver
     description: OpenClaw exec secrets provider backed by the official 1Password Go SDK
     directory: Casks
+    caveats: |
+      After install or upgrade, set OCOP_SERVICE_ACCOUNT_TOKEN_NAME for the single token item you want this binary to use, then run:
+
+        openclaw-1p-sdk-resolver trust update
+
+      To verify Keychain trust without opening trust UI, run:
+
+        openclaw-1p-sdk-resolver trust check
     hooks:
       post:
         install: |

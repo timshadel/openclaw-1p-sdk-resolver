@@ -13,12 +13,15 @@ import (
 )
 
 type cliFakeKeyring struct {
-	token    string
-	exists   bool
-	writes   int
-	forced   bool
-	password string
-	err      error
+	token       string
+	exists      bool
+	writes      int
+	forced      bool
+	password    string
+	trusted     bool
+	trustWrites int
+	err         error
+	trustErr    error
 }
 
 func (f *cliFakeKeyring) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
@@ -40,6 +43,25 @@ func (f *cliFakeKeyring) WriteGenericPassword(ctx context.Context, service strin
 	f.forced = force
 	f.password = password
 	return f.err
+}
+
+func (f *cliFakeKeyring) TrustCurrentApplication(ctx context.Context, service string, account string) error {
+	if f.trustErr != nil {
+		return f.trustErr
+	}
+	f.trustWrites++
+	f.trusted = true
+	return nil
+}
+
+func (f *cliFakeKeyring) CheckCurrentApplicationTrusted(ctx context.Context, service string, account string) error {
+	if f.trustErr != nil {
+		return f.trustErr
+	}
+	if !f.trusted {
+		return auth.ErrKeyringNotTrusted
+	}
+	return nil
 }
 
 func TestTokenDryRunDoesNotWrite(t *testing.T) {
@@ -229,6 +251,82 @@ func TestDoctorRejectsTokenEnv(t *testing.T) {
 	if !errors.Is(err, auth.ErrTokenRuntimeEnvPresent) {
 		t.Fatalf("error = %v, want ErrTokenRuntimeEnvPresent", err)
 	}
+}
+
+func TestTrustCommands(t *testing.T) {
+	t.Parallel()
+	t.Run("update trusts selected keyring item", func(t *testing.T) {
+		t.Parallel()
+		keyring := &cliFakeKeyring{}
+		var stdout bytes.Buffer
+		err := ExecuteWithRuntime(
+			context.Background(),
+			[]string{"trust", "update", "--json"},
+			strings.NewReader(""),
+			&stdout,
+			&bytes.Buffer{},
+			resolver.Runtime{
+				Env:     map[string]string{auth.ServiceAccountTokenNameEnv: "main"},
+				Keyring: keyring,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ExecuteWithRuntime: %v", err)
+		}
+		if keyring.trustWrites != 1 || !keyring.trusted {
+			t.Fatalf("keyring = %#v", keyring)
+		}
+		assertNoLeak(t, stdout.String(), "main", "tokens/main")
+		var payload trustPayload
+		if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if payload.Status != "updated" || !payload.Trusted || !payload.Updated {
+			t.Fatalf("payload = %#v", payload)
+		}
+	})
+
+	t.Run("check succeeds when trusted", func(t *testing.T) {
+		t.Parallel()
+		keyring := &cliFakeKeyring{trusted: true}
+		var stdout bytes.Buffer
+		err := ExecuteWithRuntime(
+			context.Background(),
+			[]string{"trust", "check"},
+			strings.NewReader(""),
+			&stdout,
+			&bytes.Buffer{},
+			resolver.Runtime{
+				Env:     map[string]string{auth.ServiceAccountTokenNameEnv: "main"},
+				Keyring: keyring,
+			},
+		)
+		if err != nil {
+			t.Fatalf("ExecuteWithRuntime: %v", err)
+		}
+		assertNoLeak(t, stdout.String(), "main", "tokens/main")
+		if !strings.Contains(stdout.String(), "status: trusted") {
+			t.Fatalf("stdout = %q", stdout.String())
+		}
+	})
+
+	t.Run("check fails when not trusted", func(t *testing.T) {
+		t.Parallel()
+		err := ExecuteWithRuntime(
+			context.Background(),
+			[]string{"trust", "check"},
+			strings.NewReader(""),
+			&bytes.Buffer{},
+			&bytes.Buffer{},
+			resolver.Runtime{
+				Env:     map[string]string{auth.ServiceAccountTokenNameEnv: "main"},
+				Keyring: &cliFakeKeyring{},
+			},
+		)
+		if !errors.Is(err, auth.ErrKeyringNotTrusted) {
+			t.Fatalf("error = %v, want ErrKeyringNotTrusted", err)
+		}
+	})
 }
 
 func TestResolveCommandRemoved(t *testing.T) {
