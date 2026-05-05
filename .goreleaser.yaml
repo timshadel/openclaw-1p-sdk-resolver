@@ -47,6 +47,12 @@ homebrew_casks:
     homepage: https://github.com/timshadel/openclaw-1p-sdk-resolver
     description: OpenClaw exec secrets provider backed by the official 1Password Go SDK
     directory: Casks
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/openclaw-1p-sdk-resolver"]
+          end
     repository:
       owner: timshadel
       name: homebrew-tools
