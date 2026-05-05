@@ -19,14 +19,23 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Install from Homebrew after a release:
+
+```bash
+brew tap timshadel/tools
+brew install --cask openclaw-1p-sdk-resolver
+```
+
+The release workflow publishes the cask to `timshadel/homebrew-tools`, which backs the `timshadel/tools` tap. Because that tap is a separate repository, the release workflow requires a `TAP_GITHUB_TOKEN` repository secret with write access to `timshadel/homebrew-tools`.
+
 Local release checks:
 
 ```bash
 goreleaser check
-goreleaser build --snapshot --clean
+goreleaser release --snapshot --clean
 ```
 
-The current release config builds macOS archives for `darwin/arm64` and `darwin/amd64`. Homebrew publishing is intentionally not enabled yet; add it only after choosing the target tap and release token model.
+The current release config builds macOS archives for `darwin/arm64` and `darwin/amd64`.
 
 ## OpenClaw Resolver Mode
 

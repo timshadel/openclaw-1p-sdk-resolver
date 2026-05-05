@@ -38,6 +38,21 @@ archives:
 checksum:
   name_template: checksums.txt
 
+homebrew_casks:
+  - name: openclaw-1p-sdk-resolver
+    ids:
+      - default
+    binaries:
+      - openclaw-1p-sdk-resolver
+    homepage: https://github.com/timshadel/openclaw-1p-sdk-resolver
+    description: OpenClaw exec secrets provider backed by the official 1Password Go SDK
+    directory: Casks
+    repository:
+      owner: timshadel
+      name: homebrew-tools
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
