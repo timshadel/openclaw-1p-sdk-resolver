@@ -15,14 +15,14 @@ Toolsmith guidance favors stable logical secret inputs, `ENV` and `*_FILE` deliv
 
 - Implement the resolver as a Go CLI.
 - Use the official 1Password Go SDK for secret resolution.
-- Treat the token name as the logical input named `OP_SERVICE_ACCOUNT_TOKEN_NAME`.
-- Treat the service account token value env vars `OP_SERVICE_ACCOUNT_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN_FILE` as write-only import inputs for the `token` command.
+- Treat the token name as the logical input named `OCOP_SERVICE_ACCOUNT_TOKEN_NAME`.
+- Treat the service account token value env vars `OCOP_SERVICE_ACCOUNT_TOKEN` and `OCOP_SERVICE_ACCOUNT_TOKEN_FILE` as write-only import inputs for the `token` command.
 - Make `token` dry run by default and require `--write` for keyring mutation.
 - Fail `token --write` when the keyring item already exists unless `--force` is provided.
 - Fail closed in OpenClaw resolver mode when token loading fails or write-only token env vars are present.
 - Support the system keyring as the only runtime service-account token source.
 - Use fixed keyring service `openclaw-1p-sdk-resolver`.
-- Use keyring account `tokens/<OP_SERVICE_ACCOUNT_TOKEN_NAME>`.
+- Use keyring account `tokens/<OCOP_SERVICE_ACCOUNT_TOKEN_NAME>`.
 - Use `github.com/99designs/keyring` instead of custom credential-store code.
 - Do not accept raw service account tokens on argv.
 - Do not accept raw token names on argv.

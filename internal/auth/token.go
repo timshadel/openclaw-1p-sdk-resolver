@@ -12,26 +12,26 @@ import (
 
 const (
 	// ServiceAccountTokenNameEnv selects the system keyring account suffix.
-	ServiceAccountTokenNameEnv = "OP_SERVICE_ACCOUNT_TOKEN_NAME"
+	ServiceAccountTokenNameEnv = "OCOP_SERVICE_ACCOUNT_TOKEN_NAME"
 	// ServiceAccountTokenEnv is the write-only token import input.
-	ServiceAccountTokenEnv = "OP_SERVICE_ACCOUNT_TOKEN"
+	ServiceAccountTokenEnv = "OCOP_SERVICE_ACCOUNT_TOKEN"
 	// ServiceAccountTokenFileEnv is the write-only file-backed token import input.
-	ServiceAccountTokenFileEnv = "OP_SERVICE_ACCOUNT_TOKEN_FILE"
+	ServiceAccountTokenFileEnv = "OCOP_SERVICE_ACCOUNT_TOKEN_FILE"
 )
 
 // ErrTokenMissing reports that no service account token source produced a token.
 var ErrTokenMissing = errors.New("service account token missing")
 
 // ErrTokenAmbiguous reports that both env and file token inputs were set.
-var ErrTokenAmbiguous = errors.New("both OP_SERVICE_ACCOUNT_TOKEN and OP_SERVICE_ACCOUNT_TOKEN_FILE are set")
+var ErrTokenAmbiguous = errors.New("both OCOP_SERVICE_ACCOUNT_TOKEN and OCOP_SERVICE_ACCOUNT_TOKEN_FILE are set")
 
 // ErrTokenRuntimeEnvPresent reports that a write-only token input was present outside import mode.
 var ErrTokenRuntimeEnvPresent = errors.New("write-only token env is not allowed for this command")
 
-// ErrTokenNameMissing reports that OP_SERVICE_ACCOUNT_TOKEN_NAME is missing.
+// ErrTokenNameMissing reports that OCOP_SERVICE_ACCOUNT_TOKEN_NAME is missing.
 var ErrTokenNameMissing = errors.New("service account token name missing")
 
-// ErrTokenNameInvalid reports that OP_SERVICE_ACCOUNT_TOKEN_NAME is invalid.
+// ErrTokenNameInvalid reports that OCOP_SERVICE_ACCOUNT_TOKEN_NAME is invalid.
 var ErrTokenNameInvalid = errors.New("service account token name invalid")
 
 // FileReader reads token files. It exists to keep tests off disk when useful.
@@ -80,7 +80,7 @@ func TokenProofFor(token string) TokenProof {
 	return TokenProof{Last3: last3, SHA256: hex.EncodeToString(sum[:])}
 }
 
-// TargetFromEnv builds the fixed system keyring target from OP_SERVICE_ACCOUNT_TOKEN_NAME.
+// TargetFromEnv builds the fixed system keyring target from OCOP_SERVICE_ACCOUNT_TOKEN_NAME.
 func TargetFromEnv(env map[string]string) (TokenTarget, error) {
 	name := strings.TrimSpace(env[ServiceAccountTokenNameEnv])
 	if name == "" {

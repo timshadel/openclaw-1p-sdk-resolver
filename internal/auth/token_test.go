@@ -53,6 +53,14 @@ func TestTargetFromEnv(t *testing.T) {
 	}
 }
 
+func TestTargetFromEnvIgnoresOldOPName(t *testing.T) {
+	t.Parallel()
+	_, err := TargetFromEnv(map[string]string{"OP_SERVICE_ACCOUNT_TOKEN_NAME": "main"})
+	if !errors.Is(err, ErrTokenNameMissing) {
+		t.Fatalf("error = %v, want ErrTokenNameMissing", err)
+	}
+}
+
 func TestLoadImportToken(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -105,6 +113,17 @@ func TestLoadImportToken(t *testing.T) {
 				t.Fatalf("got %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadImportTokenIgnoresOldOPInputs(t *testing.T) {
+	t.Parallel()
+	_, err := LoadImportToken(map[string]string{
+		"OP_SERVICE_ACCOUNT_TOKEN":      "token",
+		"OP_SERVICE_ACCOUNT_TOKEN_FILE": "/token",
+	}, nil)
+	if !errors.Is(err, ErrTokenMissing) {
+		t.Fatalf("error = %v, want ErrTokenMissing", err)
 	}
 }
 

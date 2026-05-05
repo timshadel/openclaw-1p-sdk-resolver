@@ -56,12 +56,12 @@ Malformed input, missing auth, invalid IDs, SDK failures, and unresolved refs fa
 ## ID Mapping
 
 - IDs beginning with `op://` are treated as full 1Password secret references.
-- Other IDs are mapped under `OP_DEFAULT_VAULT`.
+- Other IDs are mapped under `OCOP_DEFAULT_VAULT`.
 
 Example:
 
 ```text
-MyAPI/token -> op://$OP_DEFAULT_VAULT/MyAPI/token
+MyAPI/token -> op://$OCOP_DEFAULT_VAULT/MyAPI/token
 ```
 
 ## Token Contract
@@ -69,23 +69,23 @@ MyAPI/token -> op://$OP_DEFAULT_VAULT/MyAPI/token
 The service account token is selected by name:
 
 ```bash
-export OP_SERVICE_ACCOUNT_TOKEN_NAME="main"
+export OCOP_SERVICE_ACCOUNT_TOKEN_NAME="main"
 ```
 
 The raw token name is treated as sensitive operational metadata and should not be logged or passed on argv. Runtime commands use this name to read the system keyring item through `github.com/99designs/keyring`:
 
 - service: `openclaw-1p-sdk-resolver`
-- account: `tokens/<OP_SERVICE_ACCOUNT_TOKEN_NAME>`
+- account: `tokens/<OCOP_SERVICE_ACCOUNT_TOKEN_NAME>`
 
 The only command allowed to read token values from env or file is `token`. These inputs are write-only import sources:
 
 ```bash
-export OP_SERVICE_ACCOUNT_TOKEN="..."
+export OCOP_SERVICE_ACCOUNT_TOKEN="..."
 # or
-export OP_SERVICE_ACCOUNT_TOKEN_FILE="/path/to/token-file"
+export OCOP_SERVICE_ACCOUNT_TOKEN_FILE="/path/to/token-file"
 ```
 
-Exactly one token value source must be set for `token`. Resolver mode and `doctor` reject `OP_SERVICE_ACCOUNT_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN_FILE` when either variable is present.
+Exactly one token value source must be set for `token`. Resolver mode and `doctor` reject `OCOP_SERVICE_ACCOUNT_TOKEN` and `OCOP_SERVICE_ACCOUNT_TOKEN_FILE` when either variable is present.
 
 Import is dry run by default:
 

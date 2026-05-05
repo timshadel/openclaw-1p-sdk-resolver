@@ -37,7 +37,7 @@ func TestExecuteProtocolResolvesPartialSuccess(t *testing.T) {
 		bytes.NewBufferString(`{"protocolVersion":1,"provider":"openclaw-1p-sdk-resolver","ids":["MyAPI/token","Other/password"]}`),
 		&stdout,
 		Runtime{
-			Env:      map[string]string{auth.ServiceAccountTokenNameEnv: "main", "OP_DEFAULT_VAULT": "Vault"},
+			Env:      map[string]string{auth.ServiceAccountTokenNameEnv: "main", DefaultVaultEnv: "Vault"},
 			Keyring:  fakeKeyring{token: "token"},
 			Resolver: fakeResolver{values: map[string]string{"op://Vault/MyAPI/token": "secret"}},
 		},
@@ -95,7 +95,7 @@ func TestExecuteProtocolTimesOutBlockedTokenLoad(t *testing.T) {
 	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
 		Env: map[string]string{
 			auth.ServiceAccountTokenNameEnv: "main",
-			"OP_RESOLVER_TIMEOUT_MS":        "5",
+			TimeoutEnv:                      "5",
 		},
 		Keyring: blockingKeyring{},
 	})
@@ -107,7 +107,7 @@ func TestExecuteProtocolTimesOutBlockedResolverCreation(t *testing.T) {
 	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
 		Env: map[string]string{
 			auth.ServiceAccountTokenNameEnv: "main",
-			"OP_RESOLVER_TIMEOUT_MS":        "5",
+			TimeoutEnv:                      "5",
 		},
 		Keyring: fakeKeyring{token: "token"},
 		NewResolver: func(ctx context.Context, token string, clientName string, clientVersion string) (SecretResolver, error) {
@@ -122,7 +122,7 @@ func TestExecuteProtocolTimesOutBlockedResolverCall(t *testing.T) {
 	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
 		Env: map[string]string{
 			auth.ServiceAccountTokenNameEnv: "main",
-			"OP_RESOLVER_TIMEOUT_MS":        "5",
+			TimeoutEnv:                      "5",
 		},
 		Keyring:  fakeKeyring{token: "token"},
 		Resolver: blockingResolver{},
