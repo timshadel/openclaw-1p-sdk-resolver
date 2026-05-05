@@ -26,13 +26,31 @@ func ExecuteProtocol(ctx context.Context, stdin io.Reader, stdout io.Writer, run
 	}
 	empty := protocol.EmptyResponse(request.ProtocolVersion)
 	config := LoadConfig(runtime.Env)
+	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
+	defer cancel()
+
+	responseCh := make(chan protocol.Response, 1)
+	go func() {
+		responseCh <- resolveRequest(ctx, request, config, runtime)
+	}()
+
+	select {
+	case response := <-responseCh:
+		return protocol.WriteResponse(stdout, response)
+	case <-ctx.Done():
+		return protocol.WriteResponse(stdout, empty)
+	}
+}
+
+func resolveRequest(ctx context.Context, request protocol.Request, config Config, runtime Runtime) protocol.Response {
+	empty := protocol.EmptyResponse(request.ProtocolVersion)
 	token, _, err := auth.LoadRuntimeToken(ctx, runtime.Env, runtime.Keyring)
 	if err != nil {
-		return protocol.WriteResponse(stdout, empty)
+		return empty
 	}
 	requested := BuildRequestedRefs(request.IDs, config.DefaultVault)
 	if len(requested) == 0 {
-		return protocol.WriteResponse(stdout, empty)
+		return empty
 	}
 	refs := make([]string, 0, len(requested))
 	refToID := make(map[string]string, len(requested))
@@ -40,8 +58,6 @@ func ExecuteProtocol(ctx context.Context, stdin io.Reader, stdout io.Writer, run
 		refs = append(refs, item.Ref)
 		refToID[item.Ref] = item.ID
 	}
-	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
-	defer cancel()
 	secretResolver := runtime.Resolver
 	if secretResolver == nil {
 		newResolver := runtime.NewResolver
@@ -52,12 +68,12 @@ func ExecuteProtocol(ctx context.Context, stdin io.Reader, stdout io.Writer, run
 		}
 		secretResolver, err = newResolver(ctx, token.Token, config.ClientName, config.ClientVersion)
 		if err != nil {
-			return protocol.WriteResponse(stdout, empty)
+			return empty
 		}
 	}
 	resolved, err := secretResolver.ResolveRefs(ctx, refs)
 	if err != nil {
-		return protocol.WriteResponse(stdout, empty)
+		return empty
 	}
 	response := protocol.EmptyResponse(request.ProtocolVersion)
 	for ref, value := range resolved {
@@ -65,5 +81,5 @@ func ExecuteProtocol(ctx context.Context, stdin io.Reader, stdout io.Writer, run
 			response.Values[id] = value
 		}
 	}
-	return protocol.WriteResponse(stdout, response)
+	return response
 }

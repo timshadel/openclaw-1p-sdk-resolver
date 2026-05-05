@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/auth"
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/protocol"
@@ -89,6 +90,37 @@ func TestExecuteProtocolFailsClosed(t *testing.T) {
 	}
 }
 
+func TestExecuteProtocolTimesOutBlockedTokenLoad(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	start := time.Now()
+	err := ExecuteProtocol(
+		context.Background(),
+		bytes.NewBufferString(`{"protocolVersion":1,"ids":["MyAPI/token"]}`),
+		&stdout,
+		Runtime{
+			Env: map[string]string{
+				auth.ServiceAccountTokenNameEnv: "main",
+				"OP_RESOLVER_TIMEOUT_MS":        "5",
+			},
+			Keyring: blockingKeyring{},
+		},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteProtocol: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("ExecuteProtocol took %s, want bounded timeout", elapsed)
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("response JSON: %v", err)
+	}
+	if len(response.Values) != 0 {
+		t.Fatalf("values = %#v, want empty", response.Values)
+	}
+}
+
 type fakeKeyring struct {
 	token string
 }
@@ -105,5 +137,19 @@ func (f fakeKeyring) ExistsGenericPassword(ctx context.Context, service string, 
 }
 
 func (f fakeKeyring) WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error {
+	return nil
+}
+
+type blockingKeyring struct{}
+
+func (blockingKeyring) ReadGenericPassword(ctx context.Context, service string, account string) (string, error) {
+	select {}
+}
+
+func (blockingKeyring) ExistsGenericPassword(ctx context.Context, service string, account string) (bool, error) {
+	return false, nil
+}
+
+func (blockingKeyring) WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error {
 	return nil
 }
