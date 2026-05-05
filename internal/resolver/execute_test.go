@@ -92,19 +92,53 @@ func TestExecuteProtocolFailsClosed(t *testing.T) {
 
 func TestExecuteProtocolTimesOutBlockedTokenLoad(t *testing.T) {
 	t.Parallel()
+	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
+		Env: map[string]string{
+			auth.ServiceAccountTokenNameEnv: "main",
+			"OP_RESOLVER_TIMEOUT_MS":        "5",
+		},
+		Keyring: blockingKeyring{},
+	})
+	assertEmptyResponse(t, stdout)
+}
+
+func TestExecuteProtocolTimesOutBlockedResolverCreation(t *testing.T) {
+	t.Parallel()
+	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
+		Env: map[string]string{
+			auth.ServiceAccountTokenNameEnv: "main",
+			"OP_RESOLVER_TIMEOUT_MS":        "5",
+		},
+		Keyring: fakeKeyring{token: "token"},
+		NewResolver: func(ctx context.Context, token string, clientName string, clientVersion string) (SecretResolver, error) {
+			select {}
+		},
+	})
+	assertEmptyResponse(t, stdout)
+}
+
+func TestExecuteProtocolTimesOutBlockedResolverCall(t *testing.T) {
+	t.Parallel()
+	stdout := executeProtocolWithBlockingRuntime(t, Runtime{
+		Env: map[string]string{
+			auth.ServiceAccountTokenNameEnv: "main",
+			"OP_RESOLVER_TIMEOUT_MS":        "5",
+		},
+		Keyring:  fakeKeyring{token: "token"},
+		Resolver: blockingResolver{},
+	})
+	assertEmptyResponse(t, stdout)
+}
+
+func executeProtocolWithBlockingRuntime(t *testing.T, runtime Runtime) []byte {
+	t.Helper()
 	var stdout bytes.Buffer
 	start := time.Now()
 	err := ExecuteProtocol(
 		context.Background(),
 		bytes.NewBufferString(`{"protocolVersion":1,"ids":["MyAPI/token"]}`),
 		&stdout,
-		Runtime{
-			Env: map[string]string{
-				auth.ServiceAccountTokenNameEnv: "main",
-				"OP_RESOLVER_TIMEOUT_MS":        "5",
-			},
-			Keyring: blockingKeyring{},
-		},
+		runtime,
 	)
 	if err != nil {
 		t.Fatalf("ExecuteProtocol: %v", err)
@@ -112,8 +146,13 @@ func TestExecuteProtocolTimesOutBlockedTokenLoad(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("ExecuteProtocol took %s, want bounded timeout", elapsed)
 	}
+	return stdout.Bytes()
+}
+
+func assertEmptyResponse(t *testing.T, stdout []byte) {
+	t.Helper()
 	var response protocol.Response
-	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+	if err := json.Unmarshal(stdout, &response); err != nil {
 		t.Fatalf("response JSON: %v", err)
 	}
 	if len(response.Values) != 0 {
@@ -152,4 +191,10 @@ func (blockingKeyring) ExistsGenericPassword(ctx context.Context, service string
 
 func (blockingKeyring) WriteGenericPassword(ctx context.Context, service string, account string, password string, force bool) error {
 	return nil
+}
+
+type blockingResolver struct{}
+
+func (blockingResolver) ResolveRefs(ctx context.Context, refs []string) (map[string]string, error) {
+	select {}
 }
