@@ -8,11 +8,11 @@ import (
 
 func TestReadRequestAndWriteResponse(t *testing.T) {
 	t.Parallel()
-	request, err := ReadRequest(bytes.NewBufferString(`{"protocolVersion":1,"ids":["a"]}`), 1024)
+	request, err := ReadRequest(bytes.NewBufferString(`{"protocolVersion":1,"provider":"openclaw-1p-sdk-resolver","ids":["a"]}`), 1024)
 	if err != nil {
 		t.Fatalf("ReadRequest: %v", err)
 	}
-	if request.ProtocolVersion != 1 || len(request.IDs) != 1 || request.IDs[0] != "a" {
+	if request.ProtocolVersion != 1 || request.Provider != "openclaw-1p-sdk-resolver" || len(request.IDs) != 1 || request.IDs[0] != "a" {
 		t.Fatalf("unexpected request: %#v", request)
 	}
 	var out bytes.Buffer

@@ -33,7 +33,7 @@ func TestExecuteProtocolResolvesPartialSuccess(t *testing.T) {
 	var stdout bytes.Buffer
 	err := ExecuteProtocol(
 		context.Background(),
-		bytes.NewBufferString(`{"protocolVersion":1,"ids":["MyAPI/token","Other/password"]}`),
+		bytes.NewBufferString(`{"protocolVersion":1,"provider":"openclaw-1p-sdk-resolver","ids":["MyAPI/token","Other/password"]}`),
 		&stdout,
 		Runtime{
 			Env:      map[string]string{auth.ServiceAccountTokenNameEnv: "main", "OP_DEFAULT_VAULT": "Vault"},
@@ -64,8 +64,10 @@ func TestExecuteProtocolFailsClosed(t *testing.T) {
 		env   map[string]string
 	}{
 		{name: "invalid json", stdin: `{`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}},
+		{name: "unknown field", stdin: `{"protocolVersion":1,"provider":"openclaw-1p-sdk-resolver","ids":["x"],"extra":true}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}},
 		{name: "missing token", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}},
 		{name: "env token present", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main", auth.ServiceAccountTokenEnv: "token"}},
+		{name: "file token present", stdin: `{"protocolVersion":1,"ids":["x"]}`, env: map[string]string{auth.ServiceAccountTokenNameEnv: "main", auth.ServiceAccountTokenFileEnv: "/token"}},
 	}
 	for _, tt := range tests {
 		tt := tt

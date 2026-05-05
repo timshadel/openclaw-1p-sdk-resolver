@@ -17,6 +17,7 @@ const (
 // Request is the OpenClaw exec provider request.
 type Request struct {
 	ProtocolVersion int      `json:"protocolVersion"`
+	Provider        string   `json:"provider,omitempty"`
 	IDs             []string `json:"ids"`
 }
 
