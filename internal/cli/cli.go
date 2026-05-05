@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/auth"
 	envpkg "github.com/timshadel/openclaw-1p-sdk-resolver/internal/env"
+	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/observability"
 	"github.com/timshadel/openclaw-1p-sdk-resolver/internal/resolver"
 )
 
@@ -21,7 +23,17 @@ var (
 // Execute runs the CLI.
 func Execute(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	env := envpkg.FromOS()
-	runtime := resolver.Runtime{Env: env}
+	logs, err := observability.Open(env)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "logging disabled: %v\n", err)
+		logs = observability.Nop()
+	}
+	defer func() {
+		if err := logs.Close(); err != nil {
+			_, _ = fmt.Fprintf(stderr, "close logs: %v\n", err)
+		}
+	}()
+	runtime := resolver.Runtime{Env: env, Logs: logs}
 	return ExecuteWithRuntime(ctx, args, stdin, stdout, stderr, runtime)
 }
 
@@ -112,12 +124,24 @@ type tokenPayload struct {
 }
 
 func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options tokenOptions) error {
+	logs := logsOrNop(runtime)
+	logs.Info.InfoContext(ctx, "token command started",
+		slog.Bool("write", options.Write),
+		slog.Bool("force", options.Force),
+		slog.Bool("json", options.JSON),
+	)
 	target, err := auth.TargetFromEnv(runtime.Env)
 	if err != nil {
+		logs.Error.ErrorContext(ctx, "token target load failed",
+			slog.String("error", err.Error()),
+		)
 		return err
 	}
 	token, err := auth.LoadImportToken(runtime.Env, runtime.TokenFile)
 	if err != nil {
+		logs.Error.ErrorContext(ctx, "import token load failed",
+			slog.String("error", err.Error()),
+		)
 		return err
 	}
 	keyring := runtime.Keyring
@@ -126,8 +150,16 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 	}
 	existed, err := keyring.ExistsGenericPassword(ctx, target.Service, target.Account)
 	if err != nil {
+		logs.Error.ErrorContext(ctx, "keyring token existence check failed",
+			slog.String("account_sha256", target.AccountFingerprint()),
+			slog.String("error", err.Error()),
+		)
 		return err
 	}
+	logs.Info.InfoContext(ctx, "keyring token existence checked",
+		slog.String("account_sha256", target.AccountFingerprint()),
+		slog.Bool("existed", existed),
+	)
 	payload := tokenPayload{
 		Status:             "dry-run",
 		DryRun:             !options.Write,
@@ -141,11 +173,22 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 	}
 	if options.Write {
 		if existed && !options.Force {
+			logs.Error.WarnContext(ctx, "keyring token exists and force not set",
+				slog.String("account_sha256", target.AccountFingerprint()),
+			)
 			return auth.ErrKeyringItemExists
 		}
 		if err := keyring.WriteGenericPassword(ctx, target.Service, target.Account, token.Token, options.Force); err != nil {
+			logs.Error.ErrorContext(ctx, "keyring token write failed",
+				slog.String("account_sha256", target.AccountFingerprint()),
+				slog.String("error", err.Error()),
+			)
 			return err
 		}
+		logs.Info.InfoContext(ctx, "keyring token written",
+			slog.String("account_sha256", target.AccountFingerprint()),
+			slog.Bool("forced", options.Force),
+		)
 		payload.Status = "written"
 		payload.Wrote = true
 	}
@@ -167,11 +210,23 @@ type doctorPayload struct {
 }
 
 func runDoctor(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options doctorOptions) error {
+	logs := logsOrNop(runtime)
+	logs.Info.InfoContext(ctx, "doctor command started",
+		slog.Bool("sdk", options.SDK),
+		slog.Bool("json", options.JSON),
+	)
 	config := resolver.LoadConfig(runtime.Env)
 	token, target, err := auth.LoadRuntimeToken(ctx, runtime.Env, runtime.Keyring)
 	if err != nil {
+		logs.Error.ErrorContext(ctx, "doctor runtime token load failed",
+			slog.String("error", err.Error()),
+		)
 		return err
 	}
+	logs.Info.InfoContext(ctx, "doctor runtime token loaded",
+		slog.String("source", string(token.Source)),
+		slog.String("account_sha256", target.AccountFingerprint()),
+	)
 	payload := doctorPayload{
 		Status:             "ok",
 		Keyring:            "ok",
@@ -185,17 +240,32 @@ func runDoctor(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, 
 		if checkSDK == nil {
 			checkSDK = resolver.CheckOnePasswordSDK
 		}
+		logs.Info.InfoContext(ctx, "doctor sdk check started",
+			slog.String("client_name", config.ClientName),
+			slog.String("client_version", config.ClientVersion),
+		)
 		if err := checkSDK(ctx, token.Token, config.ClientName, config.ClientVersion); err != nil {
 			payload.Status = "failed"
 			payload.SDK = "failed"
+			logs.Error.ErrorContext(ctx, "doctor sdk check failed",
+				slog.String("error", err.Error()),
+			)
 			if writeErr := writeDoctorPayload(stdout, payload, options.JSON); writeErr != nil {
 				return writeErr
 			}
 			return fmt.Errorf("sdk check failed")
 		}
+		logs.Info.InfoContext(ctx, "doctor sdk check succeeded")
 		payload.SDK = "ok"
 	}
 	return writeDoctorPayload(stdout, payload, options.JSON)
+}
+
+func logsOrNop(runtime resolver.Runtime) observability.Loggers {
+	if runtime.Logs.Info != nil && runtime.Logs.Error != nil {
+		return runtime.Logs
+	}
+	return observability.Nop()
 }
 
 func writeTokenPayload(stdout io.Writer, payload tokenPayload, asJSON bool) error {

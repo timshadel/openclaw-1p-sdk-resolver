@@ -118,6 +118,48 @@ openclaw-1p-sdk-resolver token [--write] [--force] [--json]
 openclaw-1p-sdk-resolver doctor [--sdk] [--json]
 ```
 
+## Logging
+
+The resolver writes diagnostics to files, never to resolver stdout. Stdout remains reserved for OpenClaw exec-provider protocol JSON.
+
+By default, logs are written under XDG state:
+
+```text
+$XDG_STATE_HOME/openclaw-1p-sdk-resolver/logs/resolver.log
+$XDG_STATE_HOME/openclaw-1p-sdk-resolver/logs/resolver-error.log
+```
+
+If `XDG_STATE_HOME` is unset, the fallback is:
+
+```text
+~/.local/state/openclaw-1p-sdk-resolver/logs/
+```
+
+Logging can be configured with this optional XDG config file:
+
+```text
+$XDG_CONFIG_HOME/openclaw-1p-sdk-resolver/config.json
+```
+
+If `XDG_CONFIG_HOME` is unset, the fallback is `~/.config/openclaw-1p-sdk-resolver/config.json`.
+
+Example:
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "level": "debug",
+    "infoPath": "/var/log/openclaw-1p-sdk-resolver/resolver.log",
+    "errorPath": "/var/log/openclaw-1p-sdk-resolver/resolver-error.log"
+  }
+}
+```
+
+`level` accepts `debug`, `info`, `warn`, or `error`. `infoPath` and `errorPath` may point to the same file if a single combined log is preferred.
+
+Logs intentionally avoid raw service account tokens, token names, resolved secret values, and plaintext 1Password references. Sensitive identifiers and resolved values are recorded with scoped SHA-256 fingerprints. The scope is mixed into the fingerprint, so the same value under the same name remains comparable across runs, but the same value stored under different names produces different fingerprints.
+
 ## Development
 
 ```bash
