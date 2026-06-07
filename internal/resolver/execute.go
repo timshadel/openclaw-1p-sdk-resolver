@@ -13,7 +13,7 @@ import (
 // Runtime contains injectable resolver-mode dependencies.
 type Runtime struct {
 	Env         map[string]string
-	TokenFile   auth.FileReader
+	TokenPrompt auth.TokenPrompt
 	Keyring     auth.Keyring
 	Resolver    SecretResolver
 	NewResolver func(ctx context.Context, token string, clientName string, clientVersion string) (SecretResolver, error)

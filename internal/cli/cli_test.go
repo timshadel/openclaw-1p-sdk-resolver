@@ -64,6 +64,12 @@ func (f *cliFakeKeyring) CheckCurrentApplicationTrusted(ctx context.Context, ser
 	return nil
 }
 
+func promptToken(token string) auth.TokenPrompt {
+	return func(prompt string) (string, error) {
+		return token, nil
+	}
+}
+
 func TestTokenDryRunDoesNotWrite(t *testing.T) {
 	t.Parallel()
 	keyring := &cliFakeKeyring{}
@@ -77,9 +83,9 @@ func TestTokenDryRunDoesNotWrite(t *testing.T) {
 		resolver.Runtime{
 			Env: map[string]string{
 				auth.ServiceAccountTokenNameEnv: "main",
-				auth.ServiceAccountTokenEnv:     "secret-token",
 			},
-			Keyring: keyring,
+			Keyring:     keyring,
+			TokenPrompt: promptToken("secret-token"),
 		},
 	)
 	if err != nil {
@@ -96,6 +102,9 @@ func TestTokenDryRunDoesNotWrite(t *testing.T) {
 	if !payload.DryRun || payload.Wrote || payload.TokenProof.Last3 != "ken" {
 		t.Fatalf("payload = %#v", payload)
 	}
+	if payload.TokenSource != auth.TokenSourcePrompt {
+		t.Fatalf("token source = %q, want prompt", payload.TokenSource)
+	}
 }
 
 func TestTokenWriteAndForceBehavior(t *testing.T) {
@@ -105,16 +114,16 @@ func TestTokenWriteAndForceBehavior(t *testing.T) {
 		keyring := &cliFakeKeyring{}
 		err := ExecuteWithRuntime(
 			context.Background(),
-			[]string{"token", "--write"},
+			[]string{"token", "--prompt-and-save"},
 			strings.NewReader(""),
 			&bytes.Buffer{},
 			&bytes.Buffer{},
 			resolver.Runtime{
 				Env: map[string]string{
 					auth.ServiceAccountTokenNameEnv: "main",
-					auth.ServiceAccountTokenEnv:     "secret-token",
 				},
-				Keyring: keyring,
+				Keyring:     keyring,
+				TokenPrompt: promptToken("secret-token"),
 			},
 		)
 		if err != nil {
@@ -130,16 +139,16 @@ func TestTokenWriteAndForceBehavior(t *testing.T) {
 		keyring := &cliFakeKeyring{exists: true}
 		err := ExecuteWithRuntime(
 			context.Background(),
-			[]string{"token", "--write"},
+			[]string{"token", "--prompt-and-save"},
 			strings.NewReader(""),
 			&bytes.Buffer{},
 			&bytes.Buffer{},
 			resolver.Runtime{
 				Env: map[string]string{
 					auth.ServiceAccountTokenNameEnv: "main",
-					auth.ServiceAccountTokenEnv:     "secret-token",
 				},
-				Keyring: keyring,
+				Keyring:     keyring,
+				TokenPrompt: promptToken("secret-token"),
 			},
 		)
 		if !errors.Is(err, auth.ErrKeyringItemExists) {
@@ -155,16 +164,16 @@ func TestTokenWriteAndForceBehavior(t *testing.T) {
 		keyring := &cliFakeKeyring{exists: true}
 		err := ExecuteWithRuntime(
 			context.Background(),
-			[]string{"token", "--write", "--force"},
+			[]string{"token", "--prompt-and-save", "--force"},
 			strings.NewReader(""),
 			&bytes.Buffer{},
 			&bytes.Buffer{},
 			resolver.Runtime{
 				Env: map[string]string{
 					auth.ServiceAccountTokenNameEnv: "main",
-					auth.ServiceAccountTokenEnv:     "secret-token",
 				},
-				Keyring: keyring,
+				Keyring:     keyring,
+				TokenPrompt: promptToken("secret-token"),
 			},
 		)
 		if err != nil {
@@ -180,18 +189,40 @@ func TestTokenInputErrors(t *testing.T) {
 	t.Parallel()
 	tests := []map[string]string{
 		{auth.ServiceAccountTokenEnv: "secret-token"},
-		{auth.ServiceAccountTokenNameEnv: "main"},
 		{auth.ServiceAccountTokenNameEnv: "main", auth.ServiceAccountTokenEnv: "secret", auth.ServiceAccountTokenFileEnv: "/tmp/token"},
 	}
 	for _, env := range tests {
 		env := env
 		t.Run("error", func(t *testing.T) {
 			t.Parallel()
-			err := ExecuteWithRuntime(context.Background(), []string{"token"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, resolver.Runtime{Env: env, Keyring: &cliFakeKeyring{}})
+			err := ExecuteWithRuntime(context.Background(), []string{"token"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, resolver.Runtime{Env: env, Keyring: &cliFakeKeyring{}, TokenPrompt: promptToken("secret-token")})
 			if err == nil {
 				t.Fatal("expected error")
 			}
 		})
+	}
+	err := ExecuteWithRuntime(context.Background(), []string{"token"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, resolver.Runtime{Env: map[string]string{auth.ServiceAccountTokenNameEnv: "main"}, Keyring: &cliFakeKeyring{}, TokenPrompt: promptToken(" ")})
+	if !errors.Is(err, auth.ErrTokenMissing) {
+		t.Fatalf("empty prompt error = %v, want ErrTokenMissing", err)
+	}
+}
+
+func TestTokenWriteFlagMigrationError(t *testing.T) {
+	t.Parallel()
+	err := ExecuteWithRuntime(
+		context.Background(),
+		[]string{"token", "--write"},
+		strings.NewReader(""),
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		resolver.Runtime{
+			Env:         map[string]string{auth.ServiceAccountTokenNameEnv: "main"},
+			Keyring:     &cliFakeKeyring{},
+			TokenPrompt: promptToken("secret-token"),
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "--prompt-and-save") {
+		t.Fatalf("error = %v, want --prompt-and-save migration guidance", err)
 	}
 }
 

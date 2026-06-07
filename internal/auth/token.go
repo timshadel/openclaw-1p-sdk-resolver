@@ -8,25 +8,24 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 const (
 	// ServiceAccountTokenNameEnv selects the system keyring account suffix.
 	ServiceAccountTokenNameEnv = "OCOP_SERVICE_ACCOUNT_TOKEN_NAME"
-	// ServiceAccountTokenEnv is the write-only token import input.
+	// ServiceAccountTokenEnv is a removed token import input that fails fast when present.
 	ServiceAccountTokenEnv = "OCOP_SERVICE_ACCOUNT_TOKEN"
-	// ServiceAccountTokenFileEnv is the write-only file-backed token import input.
+	// ServiceAccountTokenFileEnv is a removed token import input that fails fast when present.
 	ServiceAccountTokenFileEnv = "OCOP_SERVICE_ACCOUNT_TOKEN_FILE"
 )
 
 // ErrTokenMissing reports that no service account token source produced a token.
 var ErrTokenMissing = errors.New("service account token missing")
 
-// ErrTokenAmbiguous reports that both env and file token inputs were set.
-var ErrTokenAmbiguous = errors.New("both OCOP_SERVICE_ACCOUNT_TOKEN and OCOP_SERVICE_ACCOUNT_TOKEN_FILE are set")
-
-// ErrTokenRuntimeEnvPresent reports that a write-only token input was present outside import mode.
-var ErrTokenRuntimeEnvPresent = errors.New("write-only token env is not allowed for this command")
+// ErrTokenRuntimeEnvPresent reports that a removed token input was present.
+var ErrTokenRuntimeEnvPresent = errors.New("OCOP_SERVICE_ACCOUNT_TOKEN and OCOP_SERVICE_ACCOUNT_TOKEN_FILE are not supported; use interactive token prompt")
 
 // ErrTokenNameMissing reports that OCOP_SERVICE_ACCOUNT_TOKEN_NAME is missing.
 var ErrTokenNameMissing = errors.New("service account token name missing")
@@ -34,15 +33,17 @@ var ErrTokenNameMissing = errors.New("service account token name missing")
 // ErrTokenNameInvalid reports that OCOP_SERVICE_ACCOUNT_TOKEN_NAME is invalid.
 var ErrTokenNameInvalid = errors.New("service account token name invalid")
 
-// FileReader reads token files. It exists to keep tests off disk when useful.
-type FileReader func(path string) ([]byte, error)
+// ErrTokenPromptUnavailable reports that the hidden token prompt cannot run.
+var ErrTokenPromptUnavailable = errors.New("interactive token prompt unavailable")
+
+// TokenPrompt reads a service account token from an interactive prompt.
+type TokenPrompt func(prompt string) (string, error)
 
 // TokenSource describes where a service account token came from without exposing it.
 type TokenSource string
 
 const (
-	TokenSourceEnv     TokenSource = "env"
-	TokenSourceFile    TokenSource = "file"
+	TokenSourcePrompt  TokenSource = "prompt"
 	TokenSourceKeyring TokenSource = "keyring"
 )
 
@@ -95,47 +96,58 @@ func TargetFromEnv(env map[string]string) (TokenTarget, error) {
 	}, nil
 }
 
-// LoadImportToken loads a write-only token from env or file for keyring import.
-func LoadImportToken(env map[string]string, readFile FileReader) (TokenResult, error) {
-	envToken, hasEnvToken := env[ServiceAccountTokenEnv]
-	filePath, hasFileToken := env[ServiceAccountTokenFileEnv]
-	envToken = strings.TrimSpace(envToken)
-	filePath = strings.TrimSpace(filePath)
-	if hasEnvToken && hasFileToken {
-		return TokenResult{}, ErrTokenAmbiguous
+// RejectImportTokenEnv fails when removed env/file token inputs are present.
+func RejectImportTokenEnv(env map[string]string) error {
+	if _, ok := env[ServiceAccountTokenEnv]; ok {
+		return ErrTokenRuntimeEnvPresent
 	}
-	if hasEnvToken {
-		if envToken == "" {
-			return TokenResult{}, ErrTokenMissing
-		}
-		return TokenResult{Token: envToken, Source: TokenSourceEnv}, nil
+	if _, ok := env[ServiceAccountTokenFileEnv]; ok {
+		return ErrTokenRuntimeEnvPresent
 	}
-	if hasFileToken {
-		if filePath == "" {
-			return TokenResult{}, ErrTokenMissing
-		}
-		if readFile == nil {
-			readFile = os.ReadFile
-		}
-		content, err := readFile(filePath)
-		if err != nil {
-			return TokenResult{}, fmt.Errorf("read service account token file: %w", err)
-		}
-		token := strings.TrimSpace(string(content))
-		if token == "" {
-			return TokenResult{}, ErrTokenMissing
-		}
-		return TokenResult{Token: token, Source: TokenSourceFile}, nil
+	return nil
+}
+
+// LoadPromptToken loads a service account token from an interactive hidden prompt.
+func LoadPromptToken(readPrompt TokenPrompt) (TokenResult, error) {
+	if readPrompt == nil {
+		readPrompt = ReadTokenFromTTY
 	}
-	return TokenResult{}, ErrTokenMissing
+	token, err := readPrompt("1Password service account token: ")
+	if err != nil {
+		return TokenResult{}, err
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return TokenResult{}, ErrTokenMissing
+	}
+	return TokenResult{Token: token, Source: TokenSourcePrompt}, nil
+}
+
+// ReadTokenFromTTY reads a service account token from /dev/tty with echo disabled.
+func ReadTokenFromTTY(prompt string) (string, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrTokenPromptUnavailable, err)
+	}
+	defer func() {
+		_ = tty.Close()
+	}()
+	if _, err := fmt.Fprint(tty, prompt); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrTokenPromptUnavailable, err)
+	}
+	token, err := term.ReadPassword(int(tty.Fd()))
+	if _, newlineErr := fmt.Fprintln(tty); newlineErr != nil && err == nil {
+		err = newlineErr
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrTokenPromptUnavailable, err)
+	}
+	return string(token), nil
 }
 
 // LoadRuntimeToken loads the service account token from the system keyring only.
 func LoadRuntimeToken(ctx context.Context, env map[string]string, keyring Keyring) (TokenResult, TokenTarget, error) {
-	if _, ok := env[ServiceAccountTokenEnv]; ok {
-		return TokenResult{}, TokenTarget{}, ErrTokenRuntimeEnvPresent
-	}
-	if _, ok := env[ServiceAccountTokenFileEnv]; ok {
+	if err := RejectImportTokenEnv(env); err != nil {
 		return TokenResult{}, TokenTarget{}, ErrTokenRuntimeEnvPresent
 	}
 	target, err := TargetFromEnv(env)

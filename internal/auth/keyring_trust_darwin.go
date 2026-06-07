@@ -7,6 +7,10 @@ package auth
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
+
+static void openclawCFDictionaryAddValue(CFMutableDictionaryRef dict, CFTypeRef key, CFTypeRef value) {
+	CFDictionaryAddValue(dict, key, value);
+}
 */
 import "C"
 import (
@@ -64,7 +68,7 @@ func copyGenericPasswordNoUI(service string, account string) C.OSStatus {
 }
 
 func addCFValue(dict C.CFMutableDictionaryRef, key C.CFTypeRef, value C.CFTypeRef) {
-	C.CFDictionaryAddValue(dict, unsafe.Pointer(key), unsafe.Pointer(value))
+	C.openclawCFDictionaryAddValue(dict, key, value)
 }
 
 func cfString(value string) C.CFStringRef {

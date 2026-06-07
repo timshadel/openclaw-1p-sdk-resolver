@@ -73,18 +73,24 @@ func newVersionCommand(stdout io.Writer) *cobra.Command {
 }
 
 func newTokenCommand(ctx context.Context, stdout io.Writer, runtime resolver.Runtime) *cobra.Command {
-	var write bool
+	var promptAndSave bool
 	var force bool
 	var asJSON bool
+	var removedWrite bool
 	cmd := &cobra.Command{
 		Use:   "token",
 		Short: "Import the 1Password service account token into the system keyring",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runToken(ctx, stdout, runtime, tokenOptions{Write: write, Force: force, JSON: asJSON})
+			if removedWrite {
+				return fmt.Errorf("--write was removed; use --prompt-and-save to save a prompted token")
+			}
+			return runToken(ctx, stdout, runtime, tokenOptions{PromptAndSave: promptAndSave, Force: force, JSON: asJSON})
 		},
 	}
-	cmd.Flags().BoolVar(&write, "write", false, "Write token to the system keyring")
+	cmd.Flags().BoolVar(&promptAndSave, "prompt-and-save", false, "Prompt for a token and save it to the system keyring")
+	cmd.Flags().BoolVar(&removedWrite, "write", false, "Removed; use --prompt-and-save")
+	_ = cmd.Flags().MarkHidden("write")
 	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing system keyring token")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Write JSON output")
 	return cmd
@@ -134,9 +140,9 @@ func newTrustCommand(ctx context.Context, stdout io.Writer, runtime resolver.Run
 }
 
 type tokenOptions struct {
-	Write bool
-	Force bool
-	JSON  bool
+	PromptAndSave bool
+	Force         bool
+	JSON          bool
 }
 
 type tokenPayload struct {
@@ -154,10 +160,16 @@ type tokenPayload struct {
 func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, options tokenOptions) error {
 	logs := logsOrNop(runtime)
 	logs.Info.InfoContext(ctx, "token command started",
-		slog.Bool("write", options.Write),
+		slog.Bool("prompt_and_save", options.PromptAndSave),
 		slog.Bool("force", options.Force),
 		slog.Bool("json", options.JSON),
 	)
+	if err := auth.RejectImportTokenEnv(runtime.Env); err != nil {
+		logs.Error.ErrorContext(ctx, "removed import token env present",
+			slog.String("error", err.Error()),
+		)
+		return err
+	}
 	target, err := auth.TargetFromEnv(runtime.Env)
 	if err != nil {
 		logs.Error.ErrorContext(ctx, "token target load failed",
@@ -165,9 +177,9 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 		)
 		return err
 	}
-	token, err := auth.LoadImportToken(runtime.Env, runtime.TokenFile)
+	token, err := auth.LoadPromptToken(runtime.TokenPrompt)
 	if err != nil {
-		logs.Error.ErrorContext(ctx, "import token load failed",
+		logs.Error.ErrorContext(ctx, "prompt token load failed",
 			slog.String("error", err.Error()),
 		)
 		return err
@@ -190,7 +202,7 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 	)
 	payload := tokenPayload{
 		Status:             "dry-run",
-		DryRun:             !options.Write,
+		DryRun:             !options.PromptAndSave,
 		WouldWrite:         true,
 		Wrote:              false,
 		Existed:            existed,
@@ -199,7 +211,7 @@ func runToken(ctx context.Context, stdout io.Writer, runtime resolver.Runtime, o
 		TokenProof:         auth.TokenProofFor(token.Token),
 		AccountFingerprint: target.AccountFingerprint(),
 	}
-	if options.Write {
+	if options.PromptAndSave {
 		if existed && !options.Force {
 			logs.Error.WarnContext(ctx, "keyring token exists and force not set",
 				slog.String("account_sha256", target.AccountFingerprint()),

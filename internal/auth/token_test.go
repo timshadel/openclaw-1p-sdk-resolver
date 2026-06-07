@@ -61,69 +61,45 @@ func TestTargetFromEnvIgnoresOldOPName(t *testing.T) {
 	}
 }
 
-func TestLoadImportToken(t *testing.T) {
+func TestRejectImportTokenEnv(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name    string
-		env     map[string]string
-		file    string
-		want    TokenResult
-		wantErr error
-	}{
-		{
-			name: "env token works",
-			env:  map[string]string{ServiceAccountTokenEnv: " token "},
-			want: TokenResult{Token: "token", Source: TokenSourceEnv},
-		},
-		{
-			name:    "both env and file fails",
-			env:     map[string]string{ServiceAccountTokenEnv: "token", ServiceAccountTokenFileEnv: "/token"},
-			wantErr: ErrTokenAmbiguous,
-		},
-		{
-			name: "file token works",
-			env:  map[string]string{ServiceAccountTokenFileEnv: "/token"},
-			file: " file-token\n",
-			want: TokenResult{Token: "file-token", Source: TokenSourceFile},
-		},
-		{
-			name:    "missing token fails",
-			env:     map[string]string{},
-			wantErr: ErrTokenMissing,
-		},
-	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
+	for _, env := range []map[string]string{
+		{ServiceAccountTokenEnv: "token"},
+		{ServiceAccountTokenFileEnv: "/token"},
+		{ServiceAccountTokenEnv: "token", ServiceAccountTokenFileEnv: "/token"},
+	} {
+		env := env
+		t.Run("rejects removed env", func(t *testing.T) {
 			t.Parallel()
-			readFile := func(path string) ([]byte, error) {
-				if tt.file == "" {
-					return nil, errors.New("unexpected file read")
-				}
-				return []byte(tt.file), nil
-			}
-			got, err := LoadImportToken(tt.env, readFile)
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("error = %v, want %v", err, tt.wantErr)
-			}
-			if err != nil {
-				return
-			}
-			if got != tt.want {
-				t.Fatalf("got %#v, want %#v", got, tt.want)
+			if err := RejectImportTokenEnv(env); !errors.Is(err, ErrTokenRuntimeEnvPresent) {
+				t.Fatalf("error = %v, want ErrTokenRuntimeEnvPresent", err)
 			}
 		})
 	}
+	if err := RejectImportTokenEnv(map[string]string{}); err != nil {
+		t.Fatalf("empty env error = %v", err)
+	}
 }
 
-func TestLoadImportTokenIgnoresOldOPInputs(t *testing.T) {
+func TestLoadPromptToken(t *testing.T) {
 	t.Parallel()
-	_, err := LoadImportToken(map[string]string{
-		"OP_SERVICE_ACCOUNT_TOKEN":      "token",
-		"OP_SERVICE_ACCOUNT_TOKEN_FILE": "/token",
-	}, nil)
+	got, err := LoadPromptToken(func(prompt string) (string, error) {
+		if prompt == "" {
+			t.Fatal("prompt should not be empty")
+		}
+		return " prompt-token\n", nil
+	})
+	if err != nil {
+		t.Fatalf("LoadPromptToken: %v", err)
+	}
+	if got != (TokenResult{Token: "prompt-token", Source: TokenSourcePrompt}) {
+		t.Fatalf("got %#v", got)
+	}
+	_, err = LoadPromptToken(func(prompt string) (string, error) {
+		return "   ", nil
+	})
 	if !errors.Is(err, ErrTokenMissing) {
-		t.Fatalf("error = %v, want ErrTokenMissing", err)
+		t.Fatalf("empty prompt error = %v, want ErrTokenMissing", err)
 	}
 }
 
