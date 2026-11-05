@@ -26,8 +26,37 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: "2.20.0"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v6
+        with:
+          repository: timshadel/homebrew-tools
+          ref: main
+          path: homebrew-tools
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Format, validate, and publish generated cask
+        working-directory: homebrew-tools
+        run: |
+          [[ "$(git branch --show-current)" == "main" ]]
+          [[ "$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')" == "origin/main" ]]
+          [[ -z "$(git status --porcelain)" ]]
+
+          cp ../dist/homebrew/Casks/openclaw-1p-sdk-resolver.rb Casks/openclaw-1p-sdk-resolver.rb
+          brew style --fix Casks/openclaw-1p-sdk-resolver.rb
+          brew style Casks/openclaw-1p-sdk-resolver.rb
+          ruby -c Casks/openclaw-1p-sdk-resolver.rb
+
+          if git diff --quiet -- Casks/openclaw-1p-sdk-resolver.rb; then
+            exit 0
+          fi
+
+          git config user.name goreleaserbot
+          git config user.email bot@goreleaser.com
+          git add Casks/openclaw-1p-sdk-resolver.rb
+          git commit -m "Brew cask update for openclaw-1p-sdk-resolver version ${GITHUB_REF_NAME}"
+          git push origin main

@@ -69,7 +69,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflow publishes macOS archives and the Homebrew cask to `timshadel/homebrew-tools`, which backs the `timshadel/tools` tap. Because that tap is a separate repository, the release workflow requires a `TAP_GITHUB_TOKEN` repository secret with write access to `timshadel/homebrew-tools`.
+The release workflow publishes macOS archives and the Homebrew cask to `timshadel/homebrew-tools`, which backs the `timshadel/tools` tap. GoReleaser generates the cask; the workflow formats and validates it with Homebrew before committing it to the tap. Because that tap is a separate repository, the release workflow requires a `TAP_GITHUB_TOKEN` repository secret with write access to `timshadel/homebrew-tools`.
 
 Local release checks:
 
